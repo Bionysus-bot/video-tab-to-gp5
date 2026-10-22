@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from app.api import score_routes as api
 from app.api.score_routes import run_recognition
 from app.models.score import RecognitionConfig, RecognitionResult, Score, TabBeat, TabMeasure, TabNote
 from app.services.local_tab_reader import UnsupportedTabImage
@@ -136,6 +137,34 @@ class RecognitionCacheTests(unittest.TestCase):
                         {'rows': [self.row]}, score)
         self.assertEqual(score.model_dump(), before)
         self.reader.assert_not_called()
+
+    def test_progress_file_retries_a_transient_windows_lock(self):
+        destination = self.directory / 'task.json'
+        original = Path.replace
+        calls = 0
+
+        def replace(path, target):
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                raise PermissionError('Windows reader holds the old file')
+            return original(path, target)
+
+        with patch.object(Path, 'replace', replace), patch.object(api.time, 'sleep'):
+            api.write_json(destination, {'status': 'review'})
+        self.assertEqual(api.read_json(destination), {'status': 'review'})
+        self.assertEqual(calls, 3)
+        self.assertFalse(destination.with_suffix('.tmp').exists())
+
+    def test_failed_final_checkpoint_still_releases_busy_project(self):
+        project = 'failed-checkpoint-test'
+        api.acquire(project)
+        self.addCleanup(api.release, project)
+        with patch.object(api, 'write_json', side_effect=PermissionError('unwritable')):
+            with self.assertRaises(PermissionError):
+                run_recognition(project, self.directory, RecognitionConfig(),
+                                {'rows': [self.row]}, Score())
+        self.assertNotIn(project, api._busy)
 
 
 if __name__ == '__main__':

@@ -16,6 +16,7 @@ from app.storage import manager as storage
 
 router = APIRouter()
 _guard = threading.Lock()
+_json_lock = threading.RLock()
 _busy = set()
 
 
@@ -29,12 +30,31 @@ def root(project_id: str) -> Path:
 
 def write_json(path: Path, data):
     temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    encoded = json.dumps(data, ensure_ascii=False, indent=2)
+    # Windows readers can briefly deny replacement of an open file. Keep our
+    # readers and writers synchronized, with bounded retries for other readers.
+    with _json_lock:
+        try:
+            temporary.write_text(encoded, encoding="utf-8")
+            for attempt in range(6):
+                try:
+                    temporary.replace(path)
+                    break
+                except PermissionError:
+                    if attempt == 5:
+                        raise
+                    time.sleep(.01 * 2 ** attempt)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def read_json(path: Path, default=None):
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
+    with _json_lock:
+        encoded = path.read_text(encoding="utf-8") if path.exists() else None
+    return json.loads(encoded) if encoded is not None else default
 
 
 def acquire(project_id):
@@ -107,8 +127,8 @@ def prepare_crops(project_id: str):
 def get_score(project_id: str):
     directory = root(project_id)
     score = Score.model_validate(read_json(directory / "score.json", Score().model_dump()))
-    task = read_json(directory / "task.json", {"status": "idle", "log": []})
     with _guard:
+        task = read_json(directory / "task.json", {"status": "idle", "log": []})
         if project_id not in _busy and task["status"] in ("recognizing", "preparing"):
             task["status"] = "failed"
             task["log"].append("服务曾重启，任务已中断。已完成的数据保留，请重试。")
@@ -215,8 +235,10 @@ def run_recognition(project_id, directory, config, manifest, score):
     finally:
         task['elapsed_seconds'] = round(time.perf_counter() - started, 3)
         task['log'].append(f"本次用时 {task['elapsed_seconds']:.2f} 秒，复用缓存 {task['cache_hits']} 行。")
-        write_json(directory / "task.json", task)
-        release(project_id)
+        try:
+            write_json(directory / "task.json", task)
+        finally:
+            release(project_id)
 
 
 @router.post("/projects/{project_id}/score/recognize")
