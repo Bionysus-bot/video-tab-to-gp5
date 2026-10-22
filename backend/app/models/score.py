@@ -61,10 +61,12 @@ class RecognitionConfig(StrictModel):
     model: str = ""
     max_rows: int = Field(default=3, ge=1, le=200)
     force: bool = False
+    rebuild: bool = False
 
 
 class ImagePreparationConfig(StrictModel):
     layout: Literal['auto', 'tab', 'standard-tab'] = 'auto'
+    stitch: bool = False
 
 
 class RecognitionResult(StrictModel):

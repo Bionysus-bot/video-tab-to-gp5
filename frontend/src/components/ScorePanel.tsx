@@ -154,6 +154,14 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
       await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy: 'repair', layout, base_url: baseUrl, model, max_rows: limit, force }) })
       await load()
     })}>模型修复错误小节</button>
+    <button className="btn" disabled={active || !data?.manifest.rows.some(r => r.layout === 'standard-tab')} onClick={() => perform(async () => {
+      await save()
+      await call(base + '/refresh-images', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ layout, stitch: true }) })
+      await load()
+      await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy: 'hybrid', layout, base_url: baseUrl, model, max_rows: limit, rebuild: true, force: true }) })
+      await load()
+    })}>修复跨行和编号并重识谱（先备份）</button>
+    <p>结构修复会拼接能够确认属于同一小节的相邻片段，并在所选前几行中重新识别联合谱，替换原有核对内容。缺少画面的片段会保留缺口提示，不会编造音符。</p>
     <p>模型修复会先备份，在所选前几行中复读有错误的联合谱小节（包括已标记核对的小节），每小节最多两次。通过结构校验才替换并取消该小节核对；无错误的内容保留。模型仍可能误读，跨行缺失小节暂不能补回。</p>
     {data && <>
       <div className="score-fields">

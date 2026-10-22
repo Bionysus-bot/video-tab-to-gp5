@@ -1,5 +1,6 @@
 """Local reader for aligned standard notation above TAB, independent of TAB rhythm rules."""
 import re
+from collections import Counter
 
 import cv2
 import numpy as np
@@ -7,7 +8,7 @@ import numpy as np
 from app.models.score import RecognitionResult, TabBeat, TabMeasure, TabNote
 from app.services.combined_tab import check_vision_measure, measure_regions
 from app.services.image_io import imread
-from app.services.local_tab_reader import UnsupportedTabImage, _glyphs, read_text, spans
+from app.services.local_tab_reader import UnsupportedTabImage, _glyphs, _text_crop, read_text, spans
 
 
 def standard_stems(gray, staff, tab_top):
@@ -59,13 +60,25 @@ def _printed_number(image, staff, left, right, spacing):
         return None
     padded = cv2.copyMakeBorder(crop, 5, 5, 5, 5, cv2.BORDER_CONSTANT, value=(255, 255, 255))
     padded = cv2.resize(padded, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    text, confidence = read_text([padded])[0]
-    return int(text) if re.fullmatch(r'[1-9]\d{0,2}', text) and confidence >= .8 else None
+    gray = cv2.cvtColor(padded,cv2.COLOR_BGR2GRAY)
+    enhanced = np.clip((gray.astype(np.float32)-180)*3.5,0,255).astype(np.uint8)
+    variants = read_text([padded,cv2.cvtColor(enhanced,cv2.COLOR_GRAY2BGR)])
+    valid = [(text,float(confidence)) for text,confidence in variants
+             if re.fullmatch(r'[1-9]\d{0,2}',text) and confidence >= .65]
+    # Faint leading/trailing digits disappear in the untreated crop. Prefer a
+    # complete multi-digit reading when one variant is just its substring.
+    if len(valid) == 2 and valid[0][0] != valid[1][0]:
+        a,b = valid[0][0],valid[1][0]
+        return int(a if len(a)>len(b) else b) if a in b or b in a else None
+    return int(max(valid,key=lambda item:item[1])[0]) if valid else None
 
 
-def bracketed_figures(figures, image, spacing):
+def bracketed_figures(figures, image, spacing, normalized=None):
     removed = set()
     for index, cell in enumerate(figures):
+        bracket = re.fullmatch(r'[\(\[](\d{1,2})[\)\]]',cell.get('alternative',''))
+        if bracket and bracket[1] == cell['text']:
+            cell['parenthesized'] = True
         if not cell['text'].isdigit():
             continue
         before = [(i, other) for i, other in enumerate(figures) if not other['text']
@@ -80,16 +93,78 @@ def bracketed_figures(figures, image, spacing):
             removed.update([before[-1][0], after[0][0]])
             cell['parenthesized'] = True
     for index, cell in enumerate(figures):
-        if cell['text'] or index in removed or cell['w'] < spacing * .8:
+        if (cell['text'] and cell['w'] < spacing) or index in removed or cell['w'] < spacing * .8:
             continue
         x, y, w, h = (cell[k] for k in ('x', 'y', 'w', 'h'))
         crop = cv2.copyMakeBorder(image[max(0,y-3):y+h+3,max(0,x-3):x+w+3],
                                  5,5,5,5,cv2.BORDER_CONSTANT,value=(255,255,255))
-        text, confidence = read_text([crop])[0]
-        match = re.fullmatch(r'\((\d{1,2})\)', text)
+        crops = [crop,_text_crop(image,(x,y,w,h))]
+        if normalized is not None:
+            crops.append(_text_crop(normalized,(x,y,w,h)))
+            binary = np.where(cv2.cvtColor(normalized,cv2.COLOR_BGR2GRAY)<115,0,255).astype(np.uint8)
+            region=binary[max(0,y-2):y+h+2,max(0,x-3):x+w+3]
+            crops.append(cv2.copyMakeBorder(cv2.cvtColor(region,cv2.COLOR_GRAY2BGR),7,7,7,7,
+                                           cv2.BORDER_CONSTANT,value=(255,255,255)))
+        readings = read_text(crops)
+        bracketed = [(text,confidence) for text,confidence in readings
+                     if re.fullmatch(r'[\(\[]\d{1,2}[\)\]]',text)]
+        text, confidence = max(bracketed,key=lambda item:item[1]) if bracketed else readings[0]
+        match = re.fullmatch(r'[\(\[](\d{1,2})[\)\]]', text)
         if match and int(match[1]) <= 36 and confidence >= .5:
             cell.update(text=match[1], confidence=float(confidence), parenthesized=True)
+            removed.update(i for i, other in enumerate(figures) if i != index and not other['text']
+                           and other['string'] == cell['string'] and other['w'] < spacing * .5
+                           and 0 <= cell['x'] - other['x'] - other['w'] < spacing * .4)
+        elif not cell['text']:
+            # A separate left parenthesis may touch neither the digit nor the
+            # closing parenthesis, while OCR merges the latter two into "7)".
+            opening = [(i, other) for i, other in enumerate(figures) if i != index and not other['text']
+                       and other['string'] == cell['string'] and other['w'] < spacing * .5
+                       and -spacing*.12 <= x - other['x'] - other['w'] < spacing * .4]
+            if opening and re.fullmatch(r'[\[\(]?\d{1,2}[\)\]]', cell.get('alternative', '')):
+                if re.fullmatch(r'\d{1,2}',text) and int(text) <= 36 and confidence >= .5:
+                    cell.update(text=text,confidence=float(confidence),parenthesized=True)
+                    removed.add(opening[-1][0])
+                    continue
+                inner = image[max(0,y-3):y+h+3, x:x+w]
+                digit, score = read_text([cv2.copyMakeBorder(inner,6,6,6,6,cv2.BORDER_CONSTANT,value=(255,255,255))])[0]
+                if re.fullmatch(r'\d{1,2}',digit) and int(digit) <= 36 and score >= .5:
+                    cell.update(text=digit,confidence=float(score),parenthesized=True)
+                    removed.add(opening[-1][0])
+            elif re.fullmatch(r'[\[\(]?\d{1,2}[\)\]]', cell.get('alternative','')) and w > spacing:
+                # Both curves can be merged with the digit into one component.
+                # Re-read its interior; require agreement with the visible digit
+                # in the bracketed OCR result instead of copying the prior fret.
+                crops=[]
+                for a,b in ((.22,.8),(.26,.76),(.26,1.)):
+                    inner=image[max(0,y-2):y+h+2,x+round(w*a):x+round(w*b)]
+                    crops.append(cv2.copyMakeBorder(inner,6,6,6,6,cv2.BORDER_CONSTANT,value=(255,255,255)))
+                expected=re.search(r'\d{1,2}',cell['alternative'])[0]
+                readings=read_text(crops)
+                if any(digit == expected and score >= .5 for digit,score in readings):
+                    cell.update(text=expected,confidence=float(max(score for digit,score in readings if digit==expected)),parenthesized=True)
     return [cell for index, cell in enumerate(figures) if index not in removed]
+
+
+def number_sequence(image, row):
+    """Use agreement between printed anchors rather than propagate one bad OCR digit."""
+    regions = measure_regions(row)
+    spacing = float(np.median(np.diff(row['notation_lines'])))
+    factor = max(1, min(4, 30 / float(np.median(np.diff(row['lines'])))))
+    scaled = cv2.resize(image, None, fx=factor, fy=factor, interpolation=cv2.INTER_LINEAR)
+    staff = [round(y * factor) for y in row['notation_lines']]
+    anchors = [_printed_number(scaled, staff, round(a*factor), round(b*factor), spacing*factor)
+               for a,b in regions]
+    floor = row.get('number_floor',row.get('start_number'))
+    votes = Counter(n-i for i,n in enumerate(anchors) if n is not None and n > i
+                    and (floor is None or n-i >= floor))
+    base = None
+    if votes:
+        ranked = votes.most_common()
+        if (len(ranked) == 1 or ranked[0][1] > ranked[1][1]) and (ranked[0][1] >= 2 or ranked[0][0] == row.get('start_number',1)
+                or (floor is not None and floor <= ranked[0][0] <= floor+3)):
+            base = ranked[0][0]
+    return [base+i for i in range(len(regions))] if base else [], anchors
 
 
 def _whole_rest(gray, staff, left, right, spacing):
@@ -102,6 +177,36 @@ def _whole_rest(gray, staff, left, right, spacing):
     _, _, stats, _ = cv2.connectedComponentsWithStats(region)
     return any(spacing * .8 < w < spacing * 2.5 and spacing * .2 < h < spacing * .8
                and area > w * h * .65 and y < spacing * .4 for _, y, w, h, area in stats[1:])
+
+
+def standard_rests(gray, staff, left, right, spacing, note_centers):
+    top = max(0, round(staff[0]-spacing*.3))
+    bottom = min(gray.shape[0], round(staff[-1]+spacing*.8))
+    ink = (gray[top:bottom,left:right] < 145).astype(np.uint8)
+    horizontal = cv2.morphologyEx(ink,cv2.MORPH_OPEN,np.ones((1,max(10,round(spacing*5))),np.uint8))
+    ink = ink-horizontal
+    ink = cv2.morphologyEx(ink,cv2.MORPH_CLOSE,np.ones((max(2,round(spacing*.2)),2),np.uint8))
+    _,_,stats,_ = cv2.connectedComponentsWithStats(ink)
+    rests = []
+    for x,y,w,h,area in stats[1:]:
+        center = left+x+w/2
+        if x < spacing*.4 or x+w > right-left-spacing*.4 or any(abs(center-n) < spacing*1.2 for n in note_centers):
+            continue
+        duration = None
+        if spacing*.7 < w < spacing*1.7 and spacing*.2 < h < spacing*.85 and area/(w*h) > .65:
+            if abs(top+y+h-staff[2]) < spacing*.35:
+                duration = 2
+            elif abs(top+y-staff[1]) < spacing*.35:
+                duration = 1
+        elif spacing*.45 < w < spacing*1.4 and spacing*2.05 < h < spacing*3.1:
+            if staff[0]+spacing*.35 < top+y < staff[0]+spacing*1.4:
+                duration = 4
+        elif spacing*.4 < w < spacing*1.3 and spacing*1.05 < h < spacing*2.05:
+            if staff[0]+spacing*.6 < top+y < staff[0]+spacing*1.65:
+                duration = 8
+        if duration:
+            rests.append((center,TabBeat(duration=duration)))
+    return rests
 
 
 def read_combined_local(path, row, tuning):
@@ -122,13 +227,19 @@ def read_combined_local(path, row, tuning):
     normalized = np.clip((gray - 170) * 1.6 + 80, 0, 255).astype(np.uint8)
     figures, _, _ = _glyphs(cv2.cvtColor(normalized, cv2.COLOR_GRAY2BGR), normalized.astype(np.float32),
                           lines, dict(left=0, right=image.shape[1] - 1, spacing=tab_spacing))
-    figures = bracketed_figures(figures, cv2.cvtColor(normalized, cv2.COLOR_GRAY2BGR), tab_spacing)
+    weak = [cell for cell in figures if cell['text'].isdigit() and cell['confidence'] < .35]
+    readings = read_text([_text_crop(image,tuple(cell[k] for k in ('x','y','w','h'))) for cell in weak])
+    for cell,(text,confidence) in zip(weak,readings):
+        if re.fullmatch(r'\d{1,2}',text) and int(text) <= 36 and confidence >= .8:
+            cell.update(text=text,confidence=float(confidence))
+    figures = bracketed_figures(figures, image, tab_spacing,cv2.cvtColor(normalized,cv2.COLOR_GRAY2BGR))
     stems = standard_stems(gray, staff, lines[0])
     result = RecognitionResult(measures=[], warnings=[
-        '使用独立联合谱本地流程：TAB 数字对应上方符干和符尾；拍号暂按 4/4，需核对。两侧残缺小节未自动补齐。'])
+        '使用独立联合谱本地流程：TAB 数字对应上方符干、符尾及休止；拍号暂按 4/4，需核对。未能确认连续的边缘片段不自动补齐。'])
     previous = [TabNote.model_validate(note) for note in row.get('previous_notes', [])]
     number = int(row.get('start_number', 1))
-    for bounds in measure_regions(row):
+    numbers = row.get('measure_numbers') or number_sequence(original,row)[0]
+    for measure_index, bounds in enumerate(measure_regions(row)):
         left, right = [round(x * factor) for x in bounds]
         selected = sorted((cell for cell in figures if left + 3 < cell['x_center'] < right - 3), key=lambda c: c['x_center'])
         groups = []
@@ -137,7 +248,7 @@ def read_combined_local(path, row, tuning):
                 groups[-1].append(cell)
             else:
                 groups.append([cell])
-        beats, confidences = [], []
+        beats, confidences, centers = [], [], []
         for group in groups:
             center = float(np.mean([cell['x_center'] for cell in group]))
             candidates = [stem for stem in stems if left + 3 < stem['x'] < right - 3
@@ -155,6 +266,8 @@ def read_combined_local(path, row, tuning):
             for cell in group:
                 if cell['text'].isdigit() and int(cell['text']) <= 36:
                     note = TabNote(string=cell['string'], fret=int(cell['text']))
+                    if cell['confidence'] < .35:
+                        unresolved.append('pitch')
                     if cell['parenthesized']:
                         if any(n.string == note.string and n.fret == note.fret for n in previous):
                             note.kind = 'tie'
@@ -167,7 +280,16 @@ def read_combined_local(path, row, tuning):
                     unresolved.append('pitch')
                 confidences.append(cell['confidence'])
             beats.append(TabBeat(duration=duration, notes=notes, unresolved=sorted(set(unresolved))))
+            centers.append(center)
             previous = notes
+        whole_rest = not beats and _whole_rest(gray,staff,left,right,spacing)
+        rests = [(float(left+right)/2,TabBeat(duration=1))] if whole_rest else standard_rests(gray,staff,left,right,spacing,centers)
+        if rests:
+            events = sorted(list(zip(centers,beats))+rests,key=lambda item:item[0])
+            beats = [beat for _,beat in events]
+            confidences.extend([.9]*len(rests))
+            # A rest ends the preceding note; do not permit ties across it.
+            previous = beats[-1].notes
         if not beats:
             if _whole_rest(gray, staff, left, right, spacing):
                 beats = [TabBeat(duration=1)]
@@ -175,8 +297,8 @@ def read_combined_local(path, row, tuning):
             else:
                 beats = [TabBeat(duration=4, unresolved=['pitch', 'duration'])]
                 confidences = [0]
-        printed = _printed_number(image, staff, left, right, spacing)
-        if printed is not None and printed < number:
+        printed = numbers[measure_index] if len(numbers) == len(measure_regions(row)) else _printed_number(image, staff, left, right, spacing)
+        if not numbers and printed is not None and ('number_floor' in row or 'start_number' in row) and not number <= printed <= number+2:
             printed = None
         issues = ['拍号暂按 4/4；请核对演奏法、附点、休止与反复，未通过校验时不自动补拍。']
         if printed is None:

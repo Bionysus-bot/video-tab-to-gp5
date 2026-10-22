@@ -11,6 +11,8 @@ from app.services.image_io import imread, imwrite
 
 
 def measure_regions(row: dict) -> list[tuple[int, int]]:
+    if 'measure_bounds' in row:
+        return [tuple(bounds) for bounds in row['measure_bounds']]
     spacing = float(np.median(np.diff(row['lines'])))
     clusters = []
     for x in sorted(set(row['bars'])):

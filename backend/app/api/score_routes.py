@@ -147,6 +147,15 @@ def refresh_images(project_id: str, config: ImagePreparationConfig):
         with tempfile.TemporaryDirectory(prefix='.refresh-', dir=directory) as temporary:
             staged = Path(temporary)
             manifest = prepare_images(inputs, staged, layout=config.layout)
+            if config.stitch:
+                from app.services.score_continuity import stitch_rows
+                for candidate in manifest['rows']:
+                    original = old_keys.get((candidate['source'],candidate['source_row']))
+                    if original:
+                        for field in ('excluded','exclude_reason'):
+                            if field in original:
+                                candidate[field] = original[field]
+                manifest['continuity_log'] = stitch_rows(staged,manifest['rows'])
             mapping = {}
             pending = []
             for row in manifest['rows']:
@@ -248,7 +257,7 @@ def run_recognition(project_id, directory, config, manifest, score):
                     result = repair_combined(directory / 'rows' / row['id'], context_row, config, score.tuning,
                                              existing, recognize_row, on_progress=progress,
                                              cache_directory=directory / 'cache/model-repair')
-            elif any(m.reviewed for m in existing):
+            elif any(m.reviewed for m in existing) and not (config.rebuild and row.get('layout') == 'standard-tab'):
                 # Preserve human corrections, including a partly reviewed row.
                 # Unchecking that row's reviews explicitly allows a fresh read.
                 result = RecognitionResult(measures=[m.model_copy(deep=True) for m in existing],
@@ -284,6 +293,8 @@ def run_recognition(project_id, directory, config, manifest, score):
             reused = '（复用缓存）' if cache_hit else ''
             task["log"].append(f"{row['id']}：识别 {len(result.measures)} 小节{reused}，耗时 {time.perf_counter()-row_started:.2f} 秒")
             task["log"].extend(result.warnings)
+            if row.get('continuity_issue'):
+                task['log'].append(row['continuity_issue'])
             write_json(directory / "task.json", task)
         if recognized_count:
             task["status"] = "review"
@@ -320,8 +331,8 @@ def recognize(project_id: str, config: RecognitionConfig):
         if not manifest["rows"]:
             raise HTTPException(400, "请先整理截图或导入 PDF")
         score = Score.model_validate(read_json(directory / "score.json", Score().model_dump()))
-        if config.strategy == 'repair':
-            snapshot = directory / 'backups' / ('model-repair-' + uuid.uuid4().hex)
+        if config.strategy == 'repair' or config.rebuild:
+            snapshot = directory / 'backups' / (('structure-' if config.rebuild else 'model-repair-') + uuid.uuid4().hex)
             snapshot.mkdir(parents=True)
             write_json(snapshot / 'score.json', score.model_dump())
             write_json(snapshot / 'manifest.json', manifest)
