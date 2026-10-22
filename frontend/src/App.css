@@ -354,6 +354,7 @@
 .score-panel select, .score-panel input:not([type="checkbox"]), .score-panel textarea { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
 .score-fields { display: grid; gap: 10px; margin: 14px 0; }
 .score-fields label { display: grid; gap: 4px; }
+.score-fields .score-cache-option { display: flex; align-items: center; gap: 8px; }
 .score-panel .result-actions { flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .score-panel details { margin: 12px 0; }
 .score-panel summary { cursor: pointer; line-height: 1.6; }

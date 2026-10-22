@@ -9,6 +9,7 @@ import httpx
 
 from app.models.score import RecognitionConfig, RecognitionResult
 from app.services.local_tab_reader import UnsupportedTabImage, read_local_tab
+from app.services.recognition_cache import cache_key, load_result, store_result
 
 
 def endpoint(config: RecognitionConfig) -> str:
@@ -34,10 +35,22 @@ def ollama_models() -> list[dict]:
         return results
 
 
-def recognize_row(path: Path, row: dict, config: RecognitionConfig, tuning: list[int], client=None, on_progress=None) -> RecognitionResult:
+def recognize_row(path: Path, row: dict, config: RecognitionConfig, tuning: list[int], client=None,
+                  on_progress=None, *, cache_directory: Path | None = None, on_cache_hit=None) -> RecognitionResult:
     if config.strategy == 'hybrid':
         try:
-            return read_local_tab(path, row, tuning)
+            key = cache_key(path, row, tuning) if cache_directory is not None else None
+            if key and not config.force:
+                cached = load_result(cache_directory, key)
+                if cached is not None:
+                    if on_cache_hit:
+                        on_cache_hit()
+                    return cached
+            result = read_local_tab(path, row, tuning)
+            # Avoid associating a result with an image changed during inference.
+            if key and key == cache_key(path, row, tuning):
+                store_result(cache_directory, key, result)
+            return result
         except UnsupportedTabImage:
             pass
     if not config.model.strip():

@@ -1,6 +1,7 @@
 import json
 import re
 import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -130,7 +131,9 @@ def save_score(project_id: str, score: Score):
 
 
 def run_recognition(project_id, directory, config, manifest, score):
-    task = {"status": "recognizing", "current": 0, "total": min(config.max_rows, len(manifest["rows"])), "log": []}
+    started = time.perf_counter()
+    task = {"status": "recognizing", "current": 0, "total": min(config.max_rows, len(manifest["rows"])),
+            "cache_hits": 0, "elapsed_seconds": 0, "log": []}
     recognized_count = 0
     next_number = 1
     previous_notes = []
@@ -139,6 +142,8 @@ def run_recognition(project_id, directory, config, manifest, score):
         rows = manifest["rows"][:config.max_rows]
         # Checkpoints are row-scoped. A retry replaces only that row's measures.
         for index, row in enumerate(rows):
+            row_started = time.perf_counter()
+            cache_hit = False
             task["current"] = index + 1
             write_json(directory / "task.json", task)
             if row.get('excluded'):
@@ -161,7 +166,14 @@ def run_recognition(project_id, directory, config, manifest, score):
                 result = RecognitionResult(measures=[m.model_copy(deep=True) for m in existing],
                                            warnings=['此行已有人工核对内容，整行已保留；如需重识别，请先取消该行的核对标记。'])
             else:
-                result = recognize_row(directory / "rows" / row["id"], context_row, config, score.tuning, on_progress=progress)
+                def mark_cache_hit():
+                    nonlocal cache_hit
+                    cache_hit = True
+                result = recognize_row(directory / "rows" / row["id"], context_row, config, score.tuning,
+                                       on_progress=progress, cache_directory=directory / 'cache/local-tab',
+                                       on_cache_hit=mark_cache_hit)
+                if cache_hit:
+                    task['cache_hits'] += 1
             if result.measures:
                 next_number = result.measures[-1].number + 1
                 previous_notes = [note.model_dump() for note in result.measures[-1].beats[-1].notes] if result.measures[-1].beats else []
@@ -181,7 +193,8 @@ def run_recognition(project_id, directory, config, manifest, score):
             processed_sources.add(row['id'])
             score.measures.sort(key=lambda m: m.number)
             write_json(directory / "score.json", score.model_dump())
-            task["log"].append(f"{row['id']}：识别 {len(result.measures)} 小节")
+            reused = '（复用缓存）' if cache_hit else ''
+            task["log"].append(f"{row['id']}：识别 {len(result.measures)} 小节{reused}，耗时 {time.perf_counter()-row_started:.2f} 秒")
             task["log"].extend(result.warnings)
             write_json(directory / "task.json", task)
         if recognized_count:
@@ -200,6 +213,8 @@ def run_recognition(project_id, directory, config, manifest, score):
         else:
             task["log"].append(str(exc)[:700])
     finally:
+        task['elapsed_seconds'] = round(time.perf_counter() - started, 3)
+        task['log'].append(f"本次用时 {task['elapsed_seconds']:.2f} 秒，复用缓存 {task['cache_hits']} 行。")
         write_json(directory / "task.json", task)
         release(project_id)
 

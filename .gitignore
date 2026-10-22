@@ -12,7 +12,7 @@ frontend/dist/
 *.tsbuildinfo
 
 # Storage
-storage/projects/
+storage/
 
 # IDE
 .vscode/

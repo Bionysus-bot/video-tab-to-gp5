@@ -59,6 +59,7 @@ class RecognitionConfig(StrictModel):
     base_url: str = "http://127.0.0.1:11434"
     model: str = ""
     max_rows: int = Field(default=3, ge=1, le=200)
+    force: bool = False
 
 
 class RecognitionResult(StrictModel):

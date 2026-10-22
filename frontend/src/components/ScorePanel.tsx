@@ -27,6 +27,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
   const [strategy, setStrategy] = useState('hybrid')
   const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:11434')
   const [limit, setLimit] = useState(3)
+  const [force, setForce] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -89,7 +90,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
   try { editing = JSON.parse(draft) } catch { /* Keep invalid draft editable. */ }
   const row = data?.manifest.rows[selected]
   return <div className="result-preview score-panel">
-    <h3>转换为 Guitar Pro 谱</h3>
+    <h3>转换为 Guitar Pro 谱（加速试用版）</h3>
     <p>先整理谱面，再识别与核对，最后下载 .gp5。第一版建议先试前 3 行。</p>
     <p>已有核对标记的谱行会自动保留。需要重新识别该行时，请先取消该行所有小节的核对标记。</p>
     <div className="result-actions">
@@ -122,12 +123,13 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
       <label>视觉模型<input disabled={active} value={model} list="vision-models" onChange={e => setModel(e.target.value)} placeholder="选择或输入模型名" /><datalist id="vision-models">{models.filter(m => m.vision).map(m => <option key={m.name} value={m.name} />)}</datalist></label>
       <button className="btn" disabled={active} onClick={() => perform(detect)}>检测本地模型</button>
       <label>本次识别前几行<input type="number" min={1} max={200} disabled={active} value={limit} onChange={e => setLimit(Number(e.target.value))} /></label>
+      <label className="score-cache-option"><input type="checkbox" disabled={active || strategy !== 'hybrid'} checked={force} onChange={e => setForce(e.target.checked)} />忽略缓存，重新识别未核对谱行</label>
     </div>
-    {strategy === 'hybrid' && <p>优先读取弦线、品位和符尾；不支持的谱面再尝试所选模型。编号按画面顺序暂定，拍号暂按 4/4，需对照原图核对。</p>}
+    {strategy === 'hybrid' && <p>优先读取弦线、品位和符尾；未变化的本地识谱结果会复用缓存，不支持的谱面再尝试所选模型。编号按画面顺序暂定，拍号暂按 4/4，需对照原图核对。</p>}
     {provider === 'compatible' && <p>此模式会将谱面发送到所填地址；密钥由本机环境变量 TAB_VISION_API_KEY 提供。</p>}
     <button className="btn btn-primary" disabled={active || (strategy === 'vision' && !model) || !data?.manifest.rows.length} onClick={() => perform(async () => {
       await save()
-      await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy, base_url: baseUrl, model, max_rows: limit }) })
+      await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy, base_url: baseUrl, model, max_rows: limit, force }) })
       await load()
     })}>{data?.task.status === 'recognizing' ? `识谱中 ${data.task.current || 0}/${data.task.total || 0}` : '开始识谱'}</button>
     {data && <>
