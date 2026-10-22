@@ -43,6 +43,7 @@ class DiagnosticExportTests(unittest.TestCase):
             path=Path(directory)/'draft.gp5';report=export_diagnostic(score,path)
             parsed=guitarpro.parse(str(path))
             self.assertEqual(report['placeholders'],[])
+            self.assertEqual(parsed.title,'DIAGNOSTIC DRAFT - CHECK NOTES')
             self.assertEqual(report['uncertain'][0]['beats'],[1])
             self.assertIn('CHECK',parsed.measureHeaders[0].marker.title)
             beat=parsed.tracks[0].measures[0].voices[0].beats[0]

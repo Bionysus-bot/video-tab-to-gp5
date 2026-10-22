@@ -16,6 +16,88 @@ from app.models.score import RecognitionConfig
 
 
 class GraphAndReviewTests(unittest.TestCase):
+    def test_seam_stem_recovery_requires_head_and_visible_beams(self):
+        import cv2
+        from app.services.notation_graph import attach_heads
+        from app.services.combined_local import stem_duration
+        image=np.full((180,240),255,np.uint8)
+        for x in (100,160):cv2.ellipse(image,(x,100),(8,5),0,0,360,0,-1)
+        cv2.line(image,(168,30),(168,100),0,2)
+        stems=[dict(x=168,top=30,bottom=103)]
+        before=attach_heads(image,stems,[50,70,90,110,130],0,240,20,[100,160],seams=[100])
+        self.assertFalse(any(e.get('stem_inferred') for e in before))
+        cv2.rectangle(image,(100,30),(168,34),0,-1)
+        cv2.rectangle(image,(100,42),(168,46),0,-1)
+        after=attach_heads(image,stems,[50,70,90,110,130],0,240,20,[100,160],seams=[100])
+        inferred=next(e for e in after if e.get('stem_inferred'))
+        self.assertEqual(stem_duration(image,inferred,inferred['head'][0],20),(16,[]))
+
+    def test_partial_digit_requires_pixels_at_a_known_seam_and_stays_unknown(self):
+        from app.services.notation_graph import seam_digit_fragments
+        image=np.full((230,160),255,np.uint8);image[128:134,49:53]=0
+        self.assertFalse(seam_digit_fragments([],image,[100,130,160,190],[],30))
+        cells=seam_digit_fragments([],image,[100,130,160,190],[50],30)
+        self.assertEqual(len(cells),1)
+        self.assertEqual(cells[0]['string'],2)
+        self.assertEqual(cells[0]['text'],'')
+        self.assertEqual(cells[0]['confidence'],0)
+
+    def test_blurred_double_beams_do_not_merge_two_long_stems(self):
+        import cv2
+        from app.services.combined_local import standard_stems
+        image=np.full((200,220),255,np.uint8)
+        for x in (70,140):cv2.line(image,(x,35),(x,120),0,3)
+        cv2.rectangle(image,(70,85),(140,119),0,-1)
+        stems=standard_stems(image,[40,60,80,100,120],180)
+        self.assertEqual(len(stems),2)
+        self.assertTrue(all(any(abs(s['x']-x)<5 for s in stems) for x in (70,140)))
+
+    def test_narrow_flag_is_visible_before_half_space_samples(self):
+        import cv2
+        from app.services.combined_local import stem_duration
+        image=np.full((180,200),255,np.uint8)
+        cv2.line(image,(90,30),(90,110),0,2)
+        cv2.rectangle(image,(95,38),(98,48),0,-1)
+        self.assertEqual(stem_duration(image,dict(x=90,top=30,bottom=110,down=False),86,20),(8,[]))
+        image[:,95:99]=255
+        self.assertEqual(stem_duration(image,dict(x=90,top=30,bottom=110,down=False),86,20)[0],4)
+
+    def test_head_pitch_requires_two_consistent_visible_examples(self):
+        from app.services.notation_graph import corroborate_pitches
+        def event(fret=None,detected=True):
+            return dict(beat=TabBeat(duration=4,notes=[] if fret is None else [TabNote(string=3,fret=fret)],
+                unresolved=['pitch'] if fret is None else []),head=[50,70],head_detected=detected,
+                confidence=.99,tab_strings=[3])
+        a,b,unknown=event(7),event(7),event()
+        corroborate_pitches([a,unknown],50,20,[43,38,33,28])
+        self.assertFalse(unknown['beat'].notes)
+        corroborate_pitches([a,b,unknown],50,20,[43,38,33,28])
+        self.assertEqual(unknown['beat'].notes[0].fret,7)
+        self.assertFalse(unknown['beat'].unresolved)
+        weak=event(1);weak['beat'].unresolved=['pitch'];weak['confidence']=.2
+        corroborate_pitches([a,b,weak],50,20,[43,38,33,28])
+        self.assertEqual(weak['beat'].notes[0].fret,7)
+        certain=event(1);certain['beat'].unresolved=['pitch']
+        corroborate_pitches([a,b,certain],50,20,[43,38,33,28])
+        self.assertEqual(certain['beat'].notes[0].fret,1)
+        for examples in ([event(7),event(8)],[event(7),event(7)]):
+            unknown=event(detected=examples[0]['beat'].notes[0].fret!=examples[1]['beat'].notes[0].fret)
+            corroborate_pitches(examples+[unknown],50,20,[43,38,33,28])
+            self.assertFalse(unknown['beat'].notes)
+
+    def test_two_digits_need_one_head_and_agreeing_ocr(self):
+        from app.services.notation_graph import refine_fret_crops
+        figures=[dict(x=20,y=20,w=6,h=22,string=2,text='',alternative='1',confidence=0,
+                      x_center=23,parenthesized=False),
+                 dict(x=30,y=20,w=12,h=27,string=2,text='2',alternative='2',confidence=.95,
+                      x_center=36,parenthesized=False)]
+        image=np.full((80,100,3),255,np.uint8)
+        read=lambda crops:[('12',.99)]*len(crops)
+        result=refine_fret_crops([dict(c) for c in figures],image,30,[dict(head=[31,5])],read)
+        self.assertEqual([c['text'] for c in result],['12'])
+        result=refine_fret_crops([dict(c) for c in figures],image,30,[dict(head=[23,5]),dict(head=[36,5])],read)
+        self.assertEqual(len(result),2)
+
     def test_bad_new_association_keeps_the_visible_four_quarter_notes(self):
         from tests.test_combined_tab import combined_image
         from app.services.combined_local import read_combined_local

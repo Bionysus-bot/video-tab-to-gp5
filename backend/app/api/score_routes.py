@@ -203,6 +203,7 @@ def get_score(project_id: str):
             task["log"].append("服务曾重启，任务已中断。已完成的数据保留，请重试。")
             write_json(directory / "task.json", task)
     return {"score": score, "validation": validate_score(score),
+            "video_recovery": read_json(directory/'video-recovery.json',None),
             "draft_validation": validate_score(score,require_review=False),
             "manifest": read_json(directory / "manifest.json", {"rows": [], "rejected": []}),
             "task": task}
@@ -322,6 +323,79 @@ def run_recognition(project_id, directory, config, manifest, score):
 
 def start_recognition_worker(project_id,directory,config,manifest,score):
     threading.Thread(target=run_recognition,args=(project_id,directory,config,manifest,score),daemon=True).start()
+
+
+def run_video_recovery(project_id,directory,score,frames,roi,run_id):
+    from app.services.video_score_recovery import index_frame_views,stitch_frame_views,recover_measures
+    from app.services.diagnostic_export import export_diagnostic
+    output=directory/'video-recovery'/run_id
+    task=dict(status='recognizing',current=0,total=1,log=['正在从本项目原视频复读，结果另存为草稿。'])
+    def progress(message):
+        task['log'].append(message);write_json(directory/'task.json',task)
+    try:
+        output.mkdir(parents=True)
+        write_json(output/'source-score.json',score.model_dump())
+        before=export_diagnostic(score,output/'before.gp5')
+        targets=[v['number'] for v in before['placeholders']]
+        views=index_frame_views(frames,roi,output/'views',progress)
+        views=stitch_frame_views(views,output/'views/joined')
+        result,evidence=recover_measures(score,targets,views,output/'evidence',progress)
+        write_json(output/'recognized-score.json',result.model_dump())
+        report=export_diagnostic(result,output/'recovered.gp5')
+        write_json(directory/'video-recovery.json',dict(run_id=run_id,recovered=len(evidence),
+            placeholders=len(report['placeholders']),url=f'/api/projects/{project_id}/score/video-recovery/{run_id}/download',
+            evidence=[dict(number=e['number'],url=f'/api/projects/{project_id}/score/video-recovery/{run_id}/images/{e["image"]}') for e in evidence]))
+        task['status']='review';progress(f'原视频补读完成：恢复 {len(evidence)} 小节，草稿剩余 {len(report["placeholders"])} 个占位小节；原乐谱未覆盖。')
+    except Exception as exc:
+        task['status']='failed';progress('原视频补读未完成：'+str(exc)[:500]+'；原乐谱保留。')
+    finally:
+        try:write_json(directory/'task.json',task)
+        finally:release(project_id)
+
+
+def start_video_recovery_worker(*args):
+    threading.Thread(target=run_video_recovery,args=args,daemon=True).start()
+
+
+@router.post('/projects/{project_id}/score/recover-video')
+def recover_video(project_id: str):
+    directory=root(project_id);acquire(project_id)
+    try:
+        config=storage.read_config(project_id)
+        frames=sorted(storage.frames_dir(project_id).glob('*.jpg'))
+        manifest=read_json(directory/'manifest.json',{'rows':[]})
+        if not frames or config.roi is None:
+            raise HTTPException(400,'本项目没有保留视频帧或谱面选区，请先处理对应的原视频。')
+        if not manifest['rows'] or any(r.get('layout')!='standard-tab' for r in manifest['rows'] if not r.get('excluded')):
+            raise HTTPException(400,'原视频补读仅用于五线谱＋TAB 项目；纯 TAB 继续使用原识别流程。')
+        score=Score.model_validate(read_json(directory/'score.json',Score().model_dump()))
+        if not score.measures:raise HTTPException(400,'请先生成本地识谱草稿。')
+        run_id=uuid.uuid4().hex
+        write_json(directory/'task.json',dict(status='recognizing',current=0,total=1,log=['开始原视频补读，另存草稿。']))
+        start_video_recovery_worker(project_id,directory,score,frames,config.roi.model_dump(),run_id)
+        return dict(status='recognizing',run_id=run_id)
+    except Exception:
+        release(project_id);raise
+
+
+def recovery_directory(project_id,run_id):
+    if not re.fullmatch('[a-f0-9]{32}',run_id):raise HTTPException(404,'补读版本不存在')
+    return root(project_id)/'video-recovery'/run_id
+
+
+@router.get('/projects/{project_id}/score/video-recovery/{run_id}/download')
+def download_video_recovery(project_id: str,run_id: str):
+    path=recovery_directory(project_id,run_id)/'recovered.gp5'
+    if not path.is_file():raise HTTPException(404,'补读草稿尚未生成')
+    return FileResponse(path,filename='score-video-recovered-draft.gp5',media_type='application/octet-stream')
+
+
+@router.get('/projects/{project_id}/score/video-recovery/{run_id}/images/{filename}')
+def video_recovery_image(project_id: str,run_id: str,filename: str):
+    directory=recovery_directory(project_id,run_id)/'evidence'
+    evidence=read_json(directory/'evidence.json',[])
+    if filename not in {e['image'] for e in evidence}:raise HTTPException(404,'补读原图不存在')
+    return FileResponse(directory/filename)
 
 
 @router.post("/projects/{project_id}/score/recognize")

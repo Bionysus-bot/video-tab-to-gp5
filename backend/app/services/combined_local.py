@@ -19,12 +19,20 @@ def standard_stems(gray, staff, tab_top):
     ink[:max(0,round(staff[0]-spacing*3))]=0
     vertical = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, np.ones((3, 1), np.uint8))
     vertical = cv2.morphologyEx(vertical, cv2.MORPH_OPEN, np.ones((max(8, round(spacing * 1.6)), 1), np.uint8))
+    # Double beams can bridge neighbouring stems in the short-line mask.
+    # Split those wide spans at independently visible long vertical strokes,
+    # retaining the short mask for genuine short stems and clipped fragments.
+    long_vertical = cv2.morphologyEx(vertical, cv2.MORPH_OPEN,
+                                   np.ones((max(8, round(spacing * 2.5)), 1), np.uint8))
     stems = []
     for left, right in spans(np.flatnonzero(vertical.sum(0) > spacing * 1.5), 2):
-        x = left + int(np.argmax(vertical[:, left:right + 1].sum(0)))
-        ys = np.flatnonzero(vertical[:, x])
-        if len(ys):
-            stems.append(dict(x=x, top=int(ys[0]), bottom=int(ys[-1])))
+        strong = np.flatnonzero(long_vertical[:, left:right+1].sum(0) > spacing*2.4)+left
+        parts = spans(strong,2) if right-left > spacing and len(strong) else [(left,right)]
+        for a,b in parts:
+            x = a + int(np.argmax(vertical[:, a:b + 1].sum(0)))
+            ys = np.flatnonzero(vertical[:, x])
+            if len(ys):
+                stems.append(dict(x=x, top=int(ys[0]), bottom=int(ys[-1])))
     return stems
 
 
@@ -46,6 +54,17 @@ def stem_duration(gray, stem, center, spacing):
     grouped=stem.get('beam_group',0)
     if grouped:
         beams=min(max(beams,grouped),grouped+1)
+    if not beams:
+        # A compact standalone flag may end before the half-space samples.
+        # Require the same visible count on two nearby columns; do not count
+        # the stem itself or change the duration just to satisfy the meter.
+        narrow=[]
+        for offset in (-.4,-.3,.3,.4):
+            x=stem['x']+round(spacing*offset)
+            if not 0<=x<gray.shape[1]:continue
+            trace=gray[max(0,y0):min(gray.shape[0],y1),x]<130
+            narrow.append(sum(spacing*.1<=b-a<=spacing*.85 for a,b in spans(np.flatnonzero(trace),1)))
+        beams=1 if narrow.count(1)>=2 else 0
     if beams:
         return 4 * 2 ** min(beams, 4), []
     # Only accept an unbeamed quarter when there is a visibly filled head.
@@ -86,11 +105,11 @@ def bracketed_figures(figures, image, spacing, normalized=None):
             cell['parenthesized'] = True
         if not cell['text'].isdigit():
             continue
-        before = [(i, other) for i, other in enumerate(figures) if not other['text']
+        before = [(i, other) for i, other in enumerate(figures) if (not other['text'] or other.get('alternative')=='(')
                   and other['string'] == cell['string'] and other['w'] < spacing * .5
                   and other['h'] > cell['h'] * 1.1
-                  and 0 <= cell['x'] - other['x'] - other['w'] < spacing * .4]
-        after = [(i, other) for i, other in enumerate(figures) if not other['text']
+                  and -spacing*.12 <= cell['x'] - other['x'] - other['w'] < spacing * .4]
+        after = [(i, other) for i, other in enumerate(figures) if (not other['text'] or other.get('alternative')==')')
                  and other['string'] == cell['string'] and other['w'] < spacing * .5
                  and other['h'] > cell['h'] * 1.1
                  and 0 <= other['x'] - cell['x'] - cell['w'] < spacing * .4]
@@ -104,6 +123,13 @@ def bracketed_figures(figures, image, spacing, normalized=None):
         crop = cv2.copyMakeBorder(image[max(0,y-3):y+h+3,max(0,x-3):x+w+3],
                                  5,5,5,5,cv2.BORDER_CONSTANT,value=(255,255,255))
         crops = [crop,_text_crop(image,(x,y,w,h))]
+        # Threshold the source pixels as well: normalization can join the two
+        # parentheses into an "m" while the original still contains "(7)".
+        source_gray=cv2.cvtColor(image[max(0,y-3):y+h+3,max(0,x):x+w],cv2.COLOR_BGR2GRAY)
+        for threshold in (180,190):
+            binary=np.where(source_gray<threshold,0,255).astype(np.uint8)
+            crops.append(cv2.copyMakeBorder(cv2.cvtColor(binary,cv2.COLOR_GRAY2BGR),8,8,8,8,
+                                           cv2.BORDER_CONSTANT,value=(255,255,255)))
         if normalized is not None:
             crops.append(_text_crop(normalized,(x,y,w,h)))
             binary = np.where(cv2.cvtColor(normalized,cv2.COLOR_BGR2GRAY)<115,0,255).astype(np.uint8)
@@ -215,7 +241,7 @@ def standard_rests(gray, staff, left, right, spacing, note_centers):
 
 
 def read_combined_local(path, row, tuning, diagnostics=None):
-    from app.services.notation_graph import attach_heads,align_events,template_refine,connect_beams
+    from app.services.notation_graph import attach_heads,align_events,template_refine,connect_beams,refine_fret_crops,corroborate_pitches,seam_digit_fragments
     if len(row['lines']) != len(tuning) or len(row.get('notation_lines', [])) != 5:
         raise UnsupportedTabImage('联合谱的五线谱或弦数不完整')
     original = imread(path)
@@ -239,12 +265,17 @@ def read_combined_local(path, row, tuning, diagnostics=None):
         if re.fullmatch(r'\d{1,2}',text) and int(text) <= 36 and confidence >= .8:
             cell.update(text=text,confidence=float(confidence))
     figures = bracketed_figures(figures, image, tab_spacing,cv2.cvtColor(normalized,cv2.COLOR_GRAY2BGR))
-    template_refine(figures,image)
     stems = standard_stems(gray, staff, lines[0])
+    seams=[x*factor for x in row.get('join_seams',[])]
+    figures=seam_digit_fragments(figures,normalized,lines,seams,tab_spacing)
+    figures=refine_fret_crops(figures,image,tab_spacing,
+        attach_heads(gray,stems,staff,0,image.shape[1],spacing,seams=seams),read_text)
+    template_refine(figures,image)
     result = RecognitionResult(measures=[], warnings=[
         '使用独立联合谱本地流程：TAB 数字对应上方符干、符尾及休止；拍号暂按 4/4，需核对。未能确认连续的边缘片段不自动补齐。'])
     previous = [TabNote.model_validate(note) for note in row.get('previous_notes', [])]
     number = int(row.get('start_number', 1))
+    row_events=[]
     numbers = row.get('measure_numbers') or number_sequence(original,row)[0]
     if diagnostics is not None:
         diagnostics.update(width=original.shape[1],height=original.shape[0],events=[],measures=[])
@@ -258,7 +289,7 @@ def read_combined_local(path, row, tuning, diagnostics=None):
         if side:
             fragment_number=result.measures[0].number-1 if side=='left' else result.measures[-1].number+1
             if fragment_number<1:continue
-            previous=[] if side=='left' else result.measures[-1].beats[-1].notes
+            previous=[TabNote.model_validate(n) for n in row.get('previous_notes',[])] if side=='left' else result.measures[-1].beats[-1].notes
         left, right = [round(x * factor) for x in bounds]
         selected = sorted((cell for cell in figures if left + 3 < cell['x_center'] < right - 3), key=lambda c: c['x_center'])
         groups = []
@@ -268,7 +299,7 @@ def read_combined_local(path, row, tuning, diagnostics=None):
             else:
                 groups.append([cell])
         beats, confidences, centers = [], [], []
-        graph=attach_heads(gray,stems,staff,left,right,spacing,[float(np.mean([c['x_center'] for c in group])) for group in groups])
+        graph=attach_heads(gray,stems,staff,left,right,spacing,[float(np.mean([c['x_center'] for c in group])) for group in groups],seams=seams)
         connect_beams(gray,graph,spacing)
         matched=align_events([float(np.mean([c['x_center'] for c in group])) for group in groups],graph,spacing)
         event_traces=[]
@@ -311,7 +342,10 @@ def read_combined_local(path, row, tuning, diagnostics=None):
                 confidence=min(c['confidence'] for c in group),
                 template=any(c.get('template_score') for c in group)))
             event_traces[-1]['baseline']=(old_rhythm,old_stem)
+            event_traces[-1]['tab_strings']=sorted(set(c['string'] for c in group))
             event_traces[-1].update(head_detected=candidates[0].get('head_detected',False) if candidates else False,
+                                   head_partial=candidates[0].get('head_partial',False) if candidates else False,
+                                   stem_inferred=candidates[0].get('stem_inferred',False) if candidates else False,
                                    beam_group=candidates[0].get('beam_group',0) if candidates else 0)
             centers.append(center)
             previous = notes
@@ -366,19 +400,25 @@ def read_combined_local(path, row, tuning, diagnostics=None):
                              confidence=float(min(confidences, default=0)), issues=issues)
         # The same structural check is used for local and vision results.
         check_vision_measure(measure, '联合谱本地读取')
+        for e in event_traces:
+            e['measure']=measure.number;e['beat_index']=next(i+1 for i,b in enumerate(measure.beats) if b is e['beat'])
+        row_events.extend(event_traces)
         if side:
             measure.issues.append('边缘片段：未确认整小节覆盖，不自动计入完整曲谱。')
             total=sum((Fraction(1,b.duration)*(Fraction(3,2) if b.dotted else 1)*(Fraction(2,3) if b.triplet else 1) for b in measure.beats),Fraction(0))
             cov=np.mean(cv2.cvtColor(original,cv2.COLOR_BGR2GRAY)[row['lines']]<240,axis=0)
             ends=np.flatnonzero(cov>=.75)
             end=int(ends[-1])+1 if len(ends) else original.shape[1]
-            clear_edge=bool(selected) and max(c['x']+c['w'] for c in selected)/factor < end-tab_spacing/factor*.5
-            complete=bool(side=='right' and len(numbers)==len(full_regions) and clear_edge
+            begin=int(ends[0]) if len(ends) else 0
+            clear_edge=bool(selected) and (max(c['x']+c['w'] for c in selected)/factor < end-tab_spacing/factor*.5
+                if side=='right' else min(c['x'] for c in selected)/factor > begin+tab_spacing/factor*.5)
+            complete=bool(len(numbers)==len(full_regions) and clear_edge
                           and len(matched)==len(groups) and groups and not any(b.unresolved for b in measure.beats)
                           and total==Fraction(measure.numerator,measure.denominator))
             if complete:
-                measure.issues[-1]='行末右侧边界未检出；逐音匹配、完整拍数与边缘检查通过，作为候选保留，请核对原图。'
-                result.measures.append(measure)
+                measure.issues[-1]=('行末右侧' if side=='right' else '行首左侧')+'边界未检出；逐音匹配、完整拍数与边缘检查通过，作为候选保留，请核对原图。'
+                if side=='left':result.measures.insert(0,measure)
+                else:result.measures.append(measure)
             result.fragments.append(TabFragment(side=side,bounds=list(bounds),measure=measure,complete=complete))
         else:result.measures.append(measure)
         if diagnostics is not None:
@@ -392,4 +432,11 @@ def read_combined_local(path, row, tuning, diagnostics=None):
         if not side:number = measure.number + 1
     if not result.measures:
         raise UnsupportedTabImage('联合谱没有可读的完整小节')
+    corroborate_pitches(row_events,staff[0]/factor,spacing/factor,tuning)
+    if diagnostics is not None:
+        for entry in diagnostics['events']:
+            event=next((e for e in row_events if e['measure']==entry['measure'] and e['beat_index']==entry['beat_index']),None)
+            if event and event.get('pitch_evidence'):
+                entry.update(unresolved=event['beat'].unresolved,notes=[n.model_dump() for n in event['beat'].notes],
+                             pitch_evidence=event['pitch_evidence'])
     return result

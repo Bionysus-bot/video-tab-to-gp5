@@ -51,6 +51,9 @@ def export_diagnostic(score, destination):
         elif uncertain_beats or measure.confidence < .85:
             report['uncertain'].append(dict(number=number,beats=uncertain_beats,confidence=measure.confidence))
         draft.measures.append(measure)
+    if not report['placeholders']:
+        draft.title='DIAGNOSTIC DRAFT - CHECK NOTES'
+        report['description']='Inspection draft. No placeholder bars; CHECK markers retain uncertain readings.'
     export_gp5(draft,destination,require_review=False)
     song = guitarpro.parse(str(destination))
     for item in report['uncertain']:

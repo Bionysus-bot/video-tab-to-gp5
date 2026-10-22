@@ -32,8 +32,19 @@ def join_fragments(left_image, left_row, right_image, right_row):
         return None, '相邻谱行的上下谱位置不匹配，未拼接。'
     _, end = staff_extent(left_image,left_row)
     begin, _ = staff_extent(right_image,right_row)
+    # A clipped head/digit can precede the first columns where all TAB lines
+    # survive. Keep its visible pixels instead of trimming to line coverage.
+    def music_extent(image,row):
+        gray=cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
+        top=max(0,round(row['notation_lines'][0]-spacing*2))
+        bottom=min(image.shape[0],round(row['lines'][-1]+spacing))
+        xs=np.flatnonzero(np.any(gray[top:bottom]<120,axis=0))
+        return (int(xs[0]),int(xs[-1])+1) if len(xs) else (0,image.shape[1])
+    _,ink_end=music_extent(left_image,left_row)
+    ink_begin,_=music_extent(right_image,right_row)
+    end=max(end,ink_end);begin=min(begin,ink_begin)
     edge = right_regions[0][0]
-    if end-left_regions[-1][1] < spacing*2 or edge-begin < spacing*2:
+    if end-left_regions[-1][1] < spacing*2 or edge-begin < spacing*.7:
         return None, '边缘缺少足够的谱面片段，未拼接。'
     prefix = right_image[:,begin:edge+2]
     prefix = cv2.warpAffine(prefix,np.array([[ratio,0,0],[0,ratio,shift]],np.float32),
@@ -44,6 +55,7 @@ def join_fragments(left_image, left_row, right_image, right_row):
                 'bars': left_row['bars']+[closing],
                 'measure_bounds': left_regions+[(left_regions[-1][1],closing)],
                 'measure_numbers': ln+[ln[-1]+1],
+                'join_seams': left_row.get('join_seams',[])+[end],
                 'joined_from': [left_row['id'],right_row['id']]}
     return (joined,metadata), ''
 

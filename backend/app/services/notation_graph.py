@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 
-def attach_heads(gray, stems, staff, left, right, spacing, tab_centers=()):
+def attach_heads(gray, stems, staff, left, right, spacing, tab_centers=(), seams=()):
     top=max(0,round(staff[0]-spacing*3));bottom=min(gray.shape[0],round(staff[-1]+spacing*3))
     ink=(gray[top:bottom,left:right]<145).astype(np.uint8)
     kernel=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(max(3,round(spacing*.65)),max(3,round(spacing*.25))))
@@ -13,19 +13,60 @@ def attach_heads(gray, stems, staff, left, right, spacing, tab_centers=()):
     for (x,y,w,h,area),(cx,cy) in zip(stats[1:],centers[1:]):
         if spacing*.55<w<spacing*1.8 and spacing*.2<h<spacing*1.05 and area>spacing*spacing*.16:
             candidates.append((float(cx+left),float(cy+top)))
+    partial=[]
+    if seams:
+        small=cv2.morphologyEx(ink,cv2.MORPH_OPEN,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+            (max(3,round(spacing*.3)),max(3,round(spacing*.25)))))
+        _,_,stats,centers=cv2.connectedComponentsWithStats(small)
+        for (x,y,w,h,area),(cx,cy) in zip(stats[1:],centers[1:]):
+            if (spacing*.28<w<spacing*.9 and spacing*.3<h<spacing*1.15 and area>spacing*spacing*.08
+                    and any(abs(cx+left-s)<spacing for s in seams)):
+                partial.append((float(cx+left),float(cy+top)))
     events=[]
     for stem in stems:
         if not left+3<stem['x']<right-3:continue
+        partial_match=False
         near=[(x,y) for x,y in candidates if abs(x-stem['x'])<spacing*.9
               and min(abs(y-stem['top']),abs(y-stem['bottom']))<spacing*.9]
+        if not near:
+            near=[(x,y) for x,y in partial if abs(x-stem['x'])<spacing*.7
+                  and min(abs(y-stem['top']),abs(y-stem['bottom']))<spacing*.9]
+            partial_match=bool(near)
         if near:
             x,y=min(near,key=lambda p:min(abs(p[1]-stem['top']),abs(p[1]-stem['bottom'])))
-            events.append(dict(stem,head=[x,y],down=abs(y-stem['top'])<abs(y-stem['bottom']),head_detected=True))
+            events.append(dict(stem,head=[x,y],down=abs(y-stem['top'])<abs(y-stem['bottom']),head_detected=True,head_partial=partial_match))
         elif tab_centers:
             center=min(tab_centers,key=lambda x:min(abs(x-stem['x']-spacing*.55),abs(x-stem['x']+spacing*.55)))
             if abs(center-stem['x'])<spacing*1.1:
                 down=center>=stem['x']
                 events.append(dict(stem,head=[center,stem['top'] if down else stem['bottom']],down=down,head_detected=False))
+    # A viewport seam may remove the thin stem while leaving its head and
+    # connected beams. Accept that onset only with a detected head, a visible
+    # TAB figure and repeated beam evidence at the neighbouring beam endpoint.
+    for x,y in candidates+partial:
+        if not any(abs(x-s)<spacing for s in seams):continue
+        if not tab_centers or min(abs(x-c) for c in tab_centers)>spacing*.8:continue
+        if any(abs(x-e['head'][0])<spacing*.65 for e in events):continue
+        neighbours=[e for e in events if abs(e['head'][1]-y)<spacing*2.2 and abs(e['head'][0]-x)<spacing*5]
+        if not neighbours:continue
+        neighbour=min(neighbours,key=lambda e:abs(e['head'][0]-x));down=neighbour['down']
+        end=neighbour['bottom' if down else 'top']
+        if abs(neighbour['head'][1]-y)>spacing*.7:
+            end+=y-neighbour['head'][1]
+        if not spacing*2<abs(end-y)<spacing*5:continue
+        stem_x=round(x+(-.55 if down else .55)*spacing)
+        counts=[]
+        for offset in (-.9,-.7,-.5,.5,.7,.9):
+            xx=stem_x+round(offset*spacing)
+            if not 0<=xx<gray.shape[1]:continue
+            y0,y1=(round(end-spacing*2.1),round(end+4)) if down else (round(end-4),round(end+spacing*2.1))
+            ys=np.flatnonzero(gray[max(0,y0):min(gray.shape[0],y1),xx]<130)
+            runs=np.split(ys,np.where(np.diff(ys)>1)[0]+1)
+            counts.append(sum(spacing*.1<=len(run)<=spacing*.85 for run in runs))
+        supported=[v for v in set(counts) if 1<=v<=3 and counts.count(v)>=2]
+        if not supported:continue
+        events.append(dict(x=stem_x,top=round(y if down else end),bottom=round(end if down else y),
+            head=[x,y],down=down,head_detected=True,stem_inferred=True))
     return sorted(events,key=lambda e:e['head'][0])
 
 
@@ -92,3 +133,117 @@ def template_refine(figures,image):
         if scores and scores[0][0]>.93 and (len(scores)==1 or scores[0][0]-scores[1][0]>.08) and scores[0][1]==cell['text']:
             cell['template_score']=scores[0][0]
             cell['confidence']=max(float(cell['confidence']),scores[0][0])
+
+
+def refine_fret_crops(figures,image,spacing,heads,read_text):
+    """Recover source-pixel readings and join digits at one notation onset."""
+    removed=set()
+    ordered=sorted(enumerate(figures),key=lambda item:(item[1]['string'],item[1]['x']))
+    for (i,a),(j,b) in zip(ordered,ordered[1:]):
+        if i in removed or j in removed or a['string']!=b['string']:continue
+        if a['parenthesized'] or b['parenthesized']:continue
+        gap=b['x']-a['x']-a['w']
+        if not 0<=gap<=spacing*.25 or min(a['h'],b['h'])/max(a['h'],b['h'])<.65:continue
+        if (a['text'] or a.get('alternative')) not in ('1','2','3'):continue
+        left=a['x'];right=b['x']+b['w'];top=min(a['y'],b['y']);bottom=max(a['y']+a['h'],b['y']+b['h'])
+        onsets=[e for e in heads if left-spacing*.3<e['head'][0]<right+spacing*.3]
+        if len(onsets)!=1 or abs(onsets[0]['head'][0]-(left+right)/2)>spacing*.7:continue
+        crop=image[max(0,top-3):bottom+3,left:right]
+        gray=cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY)
+        variants=[crop,cv2.cvtColor(np.where(gray<180,0,255).astype(np.uint8),cv2.COLOR_GRAY2BGR)]
+        readings=read_text([cv2.copyMakeBorder(c,8,8,8,8,cv2.BORDER_CONSTANT,value=(255,255,255)) for c in variants])
+        if readings[0][0]==readings[1][0] and len(readings[0][0])==2 and readings[0][0].isdigit() and int(readings[0][0])<=36 and min(v[1] for v in readings)>.8:
+            a.update(x=left,y=top,w=right-left,h=bottom-top,x_center=(left+right)/2,
+                     text=readings[0][0],confidence=float(min(v[1] for v in readings)),alternative=readings[1][0])
+            removed.add(j)
+    figures=[c for i,c in enumerate(figures) if i not in removed]
+    weak=[c for c in figures if not c['text'] or c['confidence']<.35]
+    variants=[]
+    for c in weak:
+        x,y,w,h=(c[k] for k in ('x','y','w','h'))
+        crop=image[max(0,y-3):y+h+3,x:x+w];gray=cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY)
+        variants.extend([cv2.copyMakeBorder(v,8,8,8,8,cv2.BORDER_CONSTANT,value=(255,255,255))
+            for v in (crop,cv2.cvtColor(np.where(gray<180,0,255).astype(np.uint8),cv2.COLOR_GRAY2BGR))])
+    readings=read_text(variants)
+    for i,c in enumerate(weak):
+        a,b=readings[i*2:i*2+2]
+        if a[0].isdigit() and int(a[0])<=36 and a[1]>=.5:
+            agrees=a[0]==b[0] and b[1]>=.5
+            # A single grayscale reading remains an uncertain candidate;
+            # thresholding a faint seven to "1" must not replace that reading.
+            c.update(text=a[0],confidence=float(min(a[1],b[1]) if agrees else min(.34,a[1])))
+    return figures
+
+
+def corroborate_pitches(events, staff_top, spacing, tuning):
+    """Use repeated same-row staff pitches to check a weak TAB digit.
+
+    No clef/key is assumed. Conflicting pitches at the same staff position
+    disable that position; only a detected head and one visible TAB string
+    can supply an alternative to an uncertain OCR reading.
+    """
+    from app.models.score import TabNote
+    def slot(event):
+        if not event.get('head_detected') or not event.get('head'):return None
+        position=(event['head'][1]-staff_top)/(spacing*.5)
+        tolerance=.4 if event.get('head_partial') else .3
+        return round(position) if abs(position-round(position))<tolerance else None
+    bank={}
+    for event in events:
+        beat=event['beat'];key=slot(event)
+        if key is None or len(beat.notes)!=1 or 'pitch' in beat.unresolved:continue
+        note=beat.notes[0]
+        if note.kind=='dead' or event['confidence']<.8:continue
+        bank.setdefault(key,[]).append(tuning[note.string-1]+note.fret)
+    for event in events:
+        beat=event['beat'];key=slot(event);strings=event.get('tab_strings',[])
+        pitches=bank.get(key,[])
+        if ('pitch' not in beat.unresolved or len(strings)!=1 or len(pitches)<2
+                or len(set(pitches))!=1):continue
+        string=strings[0];fret=pitches[0]-tuning[string-1]
+        if not 0<=fret<=36:continue
+        differs=beat.notes and any(n.string!=string or n.fret!=fret for n in beat.notes)
+        if differs and event['confidence']>=.35:continue
+        if not beat.notes or differs:beat.notes=[TabNote(string=string,fret=fret)]
+        beat.unresolved.remove('pitch')
+        event['pitch_evidence']='same-row detected head pitch and visible TAB string; >=2 agreeing examples'
+
+
+def seam_digit_fragments(figures,normalized,lines,seams,spacing):
+    """Keep visible partial digits near a known join; do not assign a pitch."""
+    if not seams:return figures
+    ink=(normalized<115).astype(np.uint8)
+    ink[:max(0,round(lines[0]-spacing*.3))]=0
+    ink[min(ink.shape[0],round(lines[-1]+spacing*.3)):]=0
+    # A translucent playhead can erase the middle of a clipped seven. Join
+    # its surviving cap and tail locally; keep the reading unresolved until
+    # an actual notation head corroborates its pitch.
+    connected=cv2.morphologyEx(ink,cv2.MORPH_CLOSE,np.ones((max(3,round(spacing*.65)),1),np.uint8))
+    _,_,stats,_=cv2.connectedComponentsWithStats(connected)
+    extra=[]
+    for x,y,w,h,area in stats[1:]:
+        center=x+w/2
+        if not any(abs(center-s)<spacing*.7 for s in seams):continue
+        if not (area>=6 and w>=2 and spacing*.15<=h<spacing*1.15 and ink[y:y+h,x:x+w].sum()>=6):continue
+        string=int(np.argmin(abs(np.array(lines)-(y+h/2))))+1
+        if abs(lines[string-1]-(y+h/2))>spacing*.3:continue
+        if any(abs(c['x_center']-center)<spacing*.6 for c in figures):continue
+        extra.append(dict(x=int(x),y=int(y),w=int(w),h=int(h),string=string,
+            text='',alternative='',confidence=0.,x_center=center,parenthesized=False,seam_fragment=True))
+    # If a staff line connects the two surviving strokes to a wide component,
+    # inspect their column band with that line removed instead of discarding
+    # the whole faint digit. Both its cap and tail must actually be visible.
+    for seam in seams:
+        x0=max(0,round(seam-spacing*.5));x1=min(ink.shape[1],round(seam+spacing*.5))
+        for string,line in enumerate(lines,1):
+            y0=max(0,round(line-spacing*.5));y1=min(ink.shape[0],round(line+spacing*.5))
+            mask=ink[y0:y1,x0:x1].copy();mid=line-y0
+            mask[max(0,mid-2):mid+3]=0
+            ys,xs=np.nonzero(mask)
+            if len(xs)<6 or not (ys.min()<mid-spacing*.15 and ys.max()>mid+spacing*.15):continue
+            x=x0+int(xs.min());y=y0+int(ys.min());w=int(xs.max()-xs.min()+1);h=int(ys.max()-ys.min()+1)
+            center=x+w/2
+            if w>spacing*.8 or any(abs(c['x_center']-center)<spacing*.6 for c in figures+extra):continue
+            extra.append(dict(x=x,y=y,w=w,h=h,string=string,text='',alternative='',confidence=0.,
+                              x_center=center,parenthesized=False,seam_fragment=True))
+    return figures+extra

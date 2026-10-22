@@ -6,7 +6,7 @@ type Measure = { number: number; numerator: number; denominator: number; confide
 type Score = { title: string; instrument: 'bass' | 'guitar'; tempo: number; tuning: number[]; settings_confirmed: boolean; measures: Measure[] }
 type Row = { id: string; source: string; source_row?: number; layout?: 'tab' | 'standard-tab'; strings: number; excluded?: boolean; exclude_reason?: string }
 type Issue = { message: string; measure: number | null; severity: string }
-type Data = { score: Score; validation: Issue[]; draft_validation?: Issue[]; manifest: { rows: Row[]; rejected: { source: string; reason: string }[] }; task: { status: string; current?: number; total?: number; log: string[] } }
+type Data = { score: Score; validation: Issue[]; draft_validation?: Issue[]; video_recovery?: { recovered: number; placeholders: number; url: string; evidence: {number: number;url: string}[] }; manifest: { rows: Row[]; rejected: { source: string; reason: string }[] }; task: { status: string; current?: number; total?: number; log: string[] } }
 
 async function call(url: string, options?: RequestInit) {
   const response = await fetch(url, options)
@@ -174,6 +174,17 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
       await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy: 'hybrid', layout, base_url: baseUrl, model, max_rows: limit, rebuild: true, force: true }) })
       await load()
     })}>修复跨行和编号并重识谱（先备份）</button>
+    <button className="btn" disabled={active || !editing?.measures.length || !data?.manifest.rows.some(r => r.layout === 'standard-tab')} onClick={() => perform(async () => {
+      await save()
+      await call(base + '/recover-video', { method: 'POST' })
+      await load(); setNotice('正在使用本项目原视频补读，结果另存为草稿，保存的乐谱保留。')
+    })}>从原视频补读占位小节（另存草稿）</button>
+    <p>请使用生成本份 PDF 的原视频项目。补读会保留边缘像素、按印刷小节号拼接，并用已识别的相邻小节核对来源；仅接受通过音符与时值校验的候选。</p>
+    {data?.video_recovery && <div>
+      <p>最近一次原视频补读：恢复 {data.video_recovery.recovered} 个小节，草稿剩余 {data.video_recovery.placeholders} 个占位小节。此文件为另存版本。</p>
+      <a className="btn" href={data.video_recovery.url}>下载原视频补读草稿 GP5</a>
+      <details><summary>查看补读小节的原视频画面</summary>{data.video_recovery.evidence.map(e => <p key={e.number}><a href={e.url} target="_blank" rel="noreferrer">第 {e.number} 小节原图</a></p>)}</details>
+    </div>}
     <p>结构修复会拼接能够确认属于同一小节的相邻片段，并在所选前几行中重新识别联合谱，替换原有核对内容。缺少画面的片段会保留缺口提示，不会编造音符。</p>
     <p>逐拍模型复核会先备份，在所选前几行中只修改有疑点的拍位字段（包括已标记核对但仍有错误的小节），保留其余音符和拍位顺序。不接受增加新错误或让拍数偏差变大的修改；仍无法确定时保留原值。</p>
     {data && <>
