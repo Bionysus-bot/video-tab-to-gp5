@@ -6,7 +6,9 @@
 - 作者 / 仓库所有者：GitHub 用户 [codemanhr](https://github.com/codemanhr)
 - 仓库：<https://github.com/codemanhr/guitar-score-extractor>
 - 本地二次开发的起点：[`cba82b252a65cae5b49b814f0ba07d0ae24310b0`](https://github.com/codemanhr/guitar-score-extractor/commit/cba82b252a65cae5b49b814f0ba07d0ae24310b0)
-- 上游许可：MIT；原始版权声明 `Copyright (c) 2024 Guitar Score Extractor` 完整保留在根目录 `LICENSE`。
+- 上游许可：MIT；原始许可和 `Copyright (c) 2024 Guitar Score Extractor` 声明完整保留在 `LICENSES/UPSTREAM-MIT.txt`。
+
+自 v0.1.1 起，本项目首次发布且有权许可的原创新增内容采用根目录 `LICENSE` 中的非商业条款。上游和 v0.1.0 已按 MIT 发布的相同内容保留原许可，不追溯取消其商业使用权限；详见 [版权与使用说明](COPYRIGHT.md)。
 
 本项目是基于该版本的独立二次开发，不是上游官方发布。为避免将本地依赖、处理素材和运行记录带入公开仓库，发布仓库采用整理后的源码快照，不复制上游已有的依赖与素材历史。来源和基准提交在此保留，便于追溯。
 
@@ -41,4 +43,4 @@ React / TypeScript 页面与 FastAPI 后端框架，以及视频上传和预览�
 - [PyGuitarPro](https://github.com/Perlence/PyGuitarPro)：GP5 读写。
 - [Ollama](https://ollama.com/)：可选本地视觉模型运行服务。
 
-依赖和模型各自的许可不由本项目 MIT 许可替代。发布包只包含本项目源码和可选前端构建产物，不捆绑 FFmpeg、Python、Node.js 或 Ollama 模型。
+依赖和模型各自的许可不由本项目非商业条款或上游 MIT 许可替代。发布包只包含本项目源码和可选前端构建产物，不捆绑 FFmpeg、Python、Node.js 或 Ollama 模型。

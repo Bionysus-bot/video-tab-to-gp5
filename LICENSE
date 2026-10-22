@@ -1,21 +1,56 @@
-MIT License
+Video TAB to GP5 — 非商业使用许可与适用范围
+自定义许可第 1 版，自 v0.1.1（2026-10-22）起适用
+发布者：Bionysus-bot
 
-Copyright (c) 2024 Guitar Score Extractor
+本仓库包含采用不同许可的内容，不能把本文件解释为撤销上游或历史 MIT 授权。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+一、适用范围
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+本非商业许可仅适用于自 v0.1.1 起首次发布、且发布者拥有或有权许可的原创
+新增内容，以及此后按本许可发布的原创改动（以下称“受本许可约束的内容”）。
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+以下内容不因本文件改变许可：
+1. codemanhr/guitar-score-extractor 的上游代码及其他 MIT 授权部分，继续遵循
+   LICENSES/UPSTREAM-MIT.txt 中保留的原始 MIT 许可和版权声明。
+2. 已在 v0.1.0 或其他版本中按 MIT 发布的相同内容，其既有 MIT 权限继续有效。
+   对这些内容，本文件不追溯取消或缩减此前已授予的权限。
+3. 第三方依赖、模型、输入视频、曲谱及其所含作品，分别遵循各自许可或权利规则。
+
+适用范围的详细说明见 docs/COPYRIGHT.md。不能将本许可套用于发布者无权限制的内容。
+
+二、允许的非商业使用
+
+在遵守本许可的前提下，允许为非商业目的使用、复制、研究、修改及再分发受本许可
+约束的内容。非商业是指使用的主要目的不是获取商业利益或金钱报酬。
+
+复制或再分发时，须保留本许可、原项目来源、版权及第三方许可声明；修改版本须
+标明修改情况，并继续对其中受本许可约束的内容保留同等非商业限制。
+不得通过移除声明、换名、封装或再许可来取消这些限制。
+
+三、禁止商业用途
+
+未经相应权利人另行书面授权，不得将受本许可约束的内容用于商业目的，包括：
+销售或付费授权软件；提供收费或广告变现的转谱、托管、API、SaaS 或代处理服务；
+将其集成到商业产品、商业生产流程或主要为商业获益运营的服务中。
+免费提供访问不当然意味着非商业，应按实际使用目的判断。
+
+四、作品版权与转换结果
+
+本许可不授予任何第三方曲谱、音乐作品、演奏、录音录像、图片或视频的权利。
+将这些内容转换为 PDF、GP5 或其他格式，不会自动取得复制、改编、传播或销售授权。
+使用者应确保输入、处理、保存及后续使用具有相应授权或其他适用的合法依据。
+软件的非商业许可不等于对输入作品的非商业使用已获授权。
+
+五、保证与责任
+
+受本许可约束的内容按现状提供，不保证识谱准确、适合特定目的或第三方内容已获授权。
+在适用法律允许的范围内，发布者不对因使用相关内容产生的损失承担责任。
+本条不排除或限制适用法律不允许排除或限制的责任。
+
+不遵守本许可时，不享有本许可所授予的相关权限；该后果不影响独立有效的上游、
+历史 MIT 或其他第三方许可。未明确授予的权利不因此获得授权。
+
+This is a custom noncommercial, source-available license for newly licensed
+original additions from v0.1.1 onward. Upstream MIT rights and permissions
+already granted for v0.1.0 or other MIT-licensed content remain unaffected.
+It does not license third-party music, tablature, recordings or videos.

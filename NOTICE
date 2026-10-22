@@ -4,7 +4,7 @@ Based on Guitar Score Extractor by codemanhr:
 https://github.com/codemanhr/guitar-score-extractor
 Baseline commit: cba82b252a65cae5b49b814f0ba07d0ae24310b0
 Copyright (c) 2024 Guitar Score Extractor
-Licensed under the MIT License; see LICENSE.
+Upstream portions remain under MIT; see LICENSES/UPSTREAM-MIT.txt.
 
 This distribution adds TAB recognition, score editing and validation,
 optional visual-model integration, and Guitar Pro 5 export.
@@ -12,3 +12,9 @@ It is an independent derivative and is not an official upstream release.
 
 Third-party libraries and optional models retain their respective licenses.
 User-supplied videos and scores are not included in this distribution.
+
+From v0.1.1, newly released original additions licensable by the publisher
+are provided under the custom noncommercial terms in LICENSE.
+Upstream MIT rights and rights already granted for v0.1.0 or other
+MIT-licensed content remain unaffected; no retroactive restriction is imposed.
+See docs/COPYRIGHT.md for scope and music/video rights information.

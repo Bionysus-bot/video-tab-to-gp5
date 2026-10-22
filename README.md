@@ -2,7 +2,11 @@
 
 把视频里的动态 TAB 谱提取成 PDF，再把截图或已有 PDF 转成可编辑的 Guitar Pro 5（`.gp5`）文件。适用于吉他、贝斯的数字指法谱，提供本地识谱、人工校对和导出。
 
-**项目来源：**本项目基于 [codemanhr/guitar-score-extractor](https://github.com/codemanhr/guitar-score-extractor) 二次开发。原项目提供视频抽帧、谱面区域选择、去重和 PDF 导出；本项目在此基础上增加了 **PDF / 截图识谱 → 乐谱编辑 → GP5 导出**。保留原项目 MIT 许可和版权声明，详细来源见 [来源与致谢](docs/UPSTREAM.md)。
+**非商业使用：自 v0.1.1 起新授权的原创新增内容禁止用于商业用途，未经相应权利人书面许可，不得用于收费转谱、商业产品或变现服务。** 上游及已按 MIT 发布的内容保留原许可，本声明不追溯取消其既有权限。完整适用范围见 [LICENSE](LICENSE) 和 [版权与使用说明](docs/COPYRIGHT.md)。
+
+**曲谱、视频版权：**请仅处理你有权使用的素材；转换成 PDF / GP5 不会自动取得原作品的传播、改编或销售授权，非商业使用也不当然免除版权义务。
+
+**项目来源：**本项目基于 [codemanhr/guitar-score-extractor](https://github.com/codemanhr/guitar-score-extractor) 二次开发。原项目提供视频抽帧、谱面区域选择、去重和 PDF 导出；本项目在此基础上增加了 **PDF / 截图识谱 → 乐谱编辑 → GP5 导出**。原项目 MIT 许可和版权声明保留在 [LICENSES/UPSTREAM-MIT.txt](LICENSES/UPSTREAM-MIT.txt)，详细来源见 [来源与致谢](docs/UPSTREAM.md)。
 
 当前定位是辅助转谱工具，需要对照原图检查结果。输出格式是 **`.gp5`**，可用 Guitar Pro 打开、播放、编辑，并另存为新版 `.gp`；目前不直接写出新版 `.gp` 或旧版 `.gtp`。
 
@@ -201,4 +205,8 @@ cd ..
 
 ## 许可与致谢
 
-代码使用 [MIT License](LICENSE)，保留上游 `Copyright (c) 2024 Guitar Score Extractor` 声明。视频转截图 / PDF 的基础来自 [codemanhr/guitar-score-extractor](https://github.com/codemanhr/guitar-score-extractor)；GP5 写入使用 [PyGuitarPro](https://pyguitarpro.readthedocs.io/)，本地 OCR 使用 [RapidOCR](https://github.com/RapidAI/RapidOCR)。依赖遵循各自许可。用户导入的曲谱和视频不属于本项目代码许可范围。
+本仓库采用分范围许可：自 v0.1.1 起首次发布、且发布者有权许可的原创新增内容使用 [自定义非商业许可](LICENSE)；上游 MIT 代码和已按 MIT 发布的历史内容保留原有权限。带商业用途限制的部分属于源码公开项目，不宣称采用 OSI 开源许可，不能把整个仓库简单视为全部 MIT 或全部禁止商业使用。
+
+请勿将受非商业条款约束的内容用于付费转谱、收费 API / SaaS、广告变现服务或商业产品，除非另获相应权利人书面授权。对输入作品和转换结果，仍须独立确认复制、改编与传播权限。完整说明及版权反馈渠道见 [版权与使用说明](docs/COPYRIGHT.md)。
+
+视频转截图 / PDF 的基础来自 [codemanhr/guitar-score-extractor](https://github.com/codemanhr/guitar-score-extractor)，保留其 `Copyright (c) 2024 Guitar Score Extractor` 声明；GP5 写入使用 [PyGuitarPro](https://pyguitarpro.readthedocs.io/)，本地 OCR 使用 [RapidOCR](https://github.com/RapidAI/RapidOCR)。依赖和模型遵循各自许可；输入曲谱、视频及其中作品不属于本项目软件许可的授权范围。

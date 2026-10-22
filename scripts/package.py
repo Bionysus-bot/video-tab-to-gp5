@@ -8,6 +8,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = (
     '.gitignore', '.gitattributes', 'README.md', 'LICENSE', 'NOTICE', 'CHANGELOG.md',
+    'LICENSES/UPSTREAM-MIT.txt', 'docs/COPYRIGHT.md',
     'start.ps1', 'stop.ps1', 'start.sh', 'stop.sh', 'backend/requirements.txt',
     'frontend/package.json', 'frontend/package-lock.json', 'frontend/index.html',
     'frontend/tsconfig.json', 'frontend/vite.config.ts',
@@ -15,7 +16,7 @@ ROOT_FILES = (
 TREES = (
     ('backend/app', '*.py'), ('backend/tests', 'test_*.py'),
     ('frontend/src', '*'), ('docs', '*.md'), ('scripts', '*.py'),
-    ('.github/workflows', '*.yml'),
+    ('.github/workflows', '*.yml'), ('LICENSES', '*.txt'),
 )
 
 

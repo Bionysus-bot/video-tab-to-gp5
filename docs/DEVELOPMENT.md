@@ -151,7 +151,7 @@ npm run build
 - `.release/video-tab-to-gp5-source.zip`：可构建源码，需安装 Python / Node.js 依赖并构建前端。
 - `.release/video-tab-to-gp5-web.zip`：源码加 `frontend/dist/`，不需要 Node.js，仍需安装 Python 依赖和 FFmpeg。
 - 两个 ZIP 都以 `video-tab-to-gp5/` 为顶层目录。
-- 打包采用文件允许清单，不读取 `.git` 历史，不带虚拟环境、`node_modules`、用户数据、输出曲谱、密钥或私有回归素材。
+- 打包采用文件允许清单，包含 `LICENSE`、`LICENSES/UPSTREAM-MIT.txt`、`NOTICE` 和版权说明；不读取 `.git` 历史，不带虚拟环境、`node_modules`、用户数据、输出曲谱、密钥或私有回归素材。
 - `.github/workflows/ci.yml` 在推送 / PR 时运行公开测试及前端构建。
 
-源码 ZIP 可用于创建干净的新仓库。继续开发请基于新仓库，避免把原工作目录中历史跟踪的依赖或素材再次提交。上游许可和来源记录应随副本保留。
+源码 ZIP 可用于创建干净的新仓库。继续开发请基于新仓库，避免把原工作目录中历史跟踪的依赖或素材再次提交。分范围的软件许可、上游许可、版权与来源记录应随副本保留，详见 [版权说明](COPYRIGHT.md)。
