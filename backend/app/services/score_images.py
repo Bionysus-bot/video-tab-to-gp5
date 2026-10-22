@@ -9,21 +9,18 @@ import pypdfium2 as pdfium
 from app.services.image_io import imread, imwrite
 
 
-def staff_groups(image: np.ndarray) -> list[list[int]]:
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # Yellow playhead should not be mistaken for notation or a barline.
-    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                   cv2.THRESH_BINARY_INV, 51, 3)
-    horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN,
-                                  np.ones((1, max(30, image.shape[1] // 34)), np.uint8))
-    ys = np.flatnonzero((horizontal > 0).sum(axis=1) > image.shape[1] * 0.20)
+def _line_peaks(coverage: np.ndarray, threshold: float) -> list[int]:
+    ys = np.flatnonzero(coverage > threshold)
     peaks = []
     for y in ys:
         if not peaks or y - peaks[-1][-1] > 3:
             peaks.append([int(y)])
         else:
             peaks[-1].append(int(y))
-    lines = [int(np.mean(p)) for p in peaks]
+    return [int(np.mean(p)) for p in peaks]
+
+
+def _group_lines(lines: list[int], coverage: np.ndarray | None = None) -> list[list[int]]:
     groups = []
     index = 0
     while index < len(lines):
@@ -34,6 +31,12 @@ def staff_groups(image: np.ndarray) -> list[list[int]]:
                 continue
             gaps = np.diff(candidate)
             if 5 <= np.median(gaps) <= 90 and np.max(abs(gaps - np.median(gaps))) <= max(3, np.median(gaps) * .18):
+                # A fragmented line is accepted only beside a full set of
+                # regularly spaced strong lines, with at most one weak line.
+                if coverage is not None and sum(
+                    coverage[max(0, y - 3):y + 4].max() > .20 for y in candidate
+                ) < count - 1:
+                    continue
                 groups.append(candidate)
                 index += count
                 found = True
@@ -41,6 +44,24 @@ def staff_groups(image: np.ndarray) -> list[list[int]]:
         if not found:
             index += 1
     return groups
+
+
+def staff_groups(image: np.ndarray) -> list[list[int]]:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # Yellow playhead should not be mistaken for notation or a barline.
+    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                   cv2.THRESH_BINARY_INV, 51, 3)
+    horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN,
+                                  np.ones((1, max(30, image.shape[1] // 34)), np.uint8))
+    coverage = (horizontal > 0).sum(axis=1) / image.shape[1]
+    groups = _group_lines(_line_peaks(coverage, .20))
+    # Dense fret numbers can interrupt one string until less than 20% of the
+    # page width survives. Recover such rows without changing strong detections
+    # or inventing a line that has no visible horizontal evidence.
+    for candidate in _group_lines(_line_peaks(coverage, .10), coverage):
+        if not any(candidate[0] <= group[-1] and group[0] <= candidate[-1] for group in groups):
+            groups.append(candidate)
+    return sorted(groups, key=lambda group: group[0])
 
 
 def bar_positions(image: np.ndarray, lines: list[int]) -> list[int]:
@@ -88,7 +109,7 @@ def prepare_images(inputs: list[Path], output: Path) -> dict:
             previous = crop
             name = f"row_{len(rows) + 1:04d}.png"
             imwrite(str(output / name), crop)
-            rows.append(dict(id=name, source=source, strings=len(group),
+            rows.append(dict(id=name, source=source, source_row=index + 1, strings=len(group),
                              lines=[y - y0 for y in group],
                              bars=bar_positions(crop, [y - y0 for y in group]),
                              width=crop.shape[1], height=crop.shape[0]))

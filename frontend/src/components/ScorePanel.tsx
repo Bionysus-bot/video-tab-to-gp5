@@ -4,7 +4,7 @@ type Note = { string: number; fret: number; kind?: string; slide?: boolean; lega
 type Beat = { duration: number; dotted?: boolean; triplet?: boolean; unresolved?: ('pitch' | 'duration')[]; notes: Note[] }
 type Measure = { number: number; numerator: number; denominator: number; confidence: number; reviewed: boolean; source: string; issues: string[]; beats: Beat[] }
 type Score = { title: string; instrument: 'bass' | 'guitar'; tempo: number; tuning: number[]; settings_confirmed: boolean; measures: Measure[] }
-type Row = { id: string; source: string; strings: number; excluded?: boolean; exclude_reason?: string }
+type Row = { id: string; source: string; source_row?: number; strings: number; excluded?: boolean; exclude_reason?: string }
 type Issue = { message: string; measure: number | null; severity: string }
 type Data = { score: Score; validation: Issue[]; draft_validation?: Issue[]; manifest: { rows: Row[]; rejected: { source: string; reason: string }[] }; task: { status: string; current?: number; total?: number; log: string[] } }
 
@@ -89,6 +89,8 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
   let editing: Score | null = null
   try { editing = JSON.parse(draft) } catch { /* Keep invalid draft editable. */ }
   const row = data?.manifest.rows[selected]
+  const totalRows = data?.manifest.rows.length ?? 0
+  const skippedRows = data?.manifest.rows.filter(row => row.excluded).length ?? 0
   return <div className="result-preview score-panel">
     <h3>转换为 Guitar Pro 谱（加速试用版）</h3>
     <p>先整理谱面，再识别与核对，最后下载 .gp5。第一版建议先试前 3 行。</p>
@@ -101,9 +103,9 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
       }} /></label>
     </div>
     {!!data?.manifest.rows.length && <>
-      <p>检测到 {data.manifest.rows.length} 行谱面。请检查过滤结果和弦线识别是否正确。</p>
+      <p>可识别 {totalRows - skippedRows} 行谱面{skippedRows > 0 ? `（共检测 ${totalRows} 行，已跳过 ${skippedRows} 行）` : ''}。请检查过滤结果和弦线识别是否正确。</p>
       <select aria-label="原始谱面行" value={selected} onChange={e => setSelected(Number(e.target.value))}>
-        {data.manifest.rows.map((r, i) => <option key={r.id} value={i}>第 {i + 1} 行 · {r.source} · {r.strings} 根弦{r.excluded ? ' · 已跳过' : ''}</option>)}
+        {data.manifest.rows.map((r, i) => <option key={r.id} value={i}>第 {i + 1} 行 · {r.source}{r.source_row ? ` · 页内第 ${r.source_row} 行` : ''} · {r.strings} 根弦{r.excluded ? ' · 已跳过' : ''}</option>)}
       </select>
       {row && <a href={`${base}/rows/${row.id}`} target="_blank" rel="noreferrer"><img src={`${base}/rows/${row.id}`} alt={`谱面 ${row.id}`} style={{ width: '100%', background: 'white', marginTop: 8 }} /></a>}
       {row && <>
