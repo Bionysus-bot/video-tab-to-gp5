@@ -1,14 +1,18 @@
 import json
+import hashlib
 import re
+import shutil
+import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from app.models.score import RecognitionConfig, RecognitionResult, RowExclusion, Score
+from app.models.score import ImagePreparationConfig, RecognitionConfig, RecognitionResult, RowExclusion, Score
 from app.services.score_exporter import export_gp5, validate_score
 from app.services.score_images import prepare_images
 from app.services.tab_recognizer import ollama_models, recognize_row
@@ -77,12 +81,12 @@ def models():
         return {"models": [], "error": "无法读取 Ollama 模型，请打开 Ollama 并确认本机 11434 端口可用"}
 
 
-def prepare(project_id, directory, inputs):
+def prepare(project_id, directory, inputs, layout='auto'):
     # A new source invalidates the old transcription immediately.
     write_json(directory / "score.json", Score().model_dump())
     write_json(directory / "task.json", {"status": "preparing", "log": []})
     try:
-        manifest = prepare_images(inputs, directory / "rows")
+        manifest = prepare_images(inputs, directory / "rows", layout=layout)
         write_json(directory / "manifest.json", manifest)
         write_json(directory / "task.json", {"status": "idle", "log": []})
         return manifest
@@ -93,7 +97,8 @@ def prepare(project_id, directory, inputs):
 
 
 @router.post("/projects/{project_id}/score/pdf")
-def upload_pdf(project_id: str, file: UploadFile = File(...)):
+def upload_pdf(project_id: str, file: UploadFile = File(...), layout: str = 'auto'):
+    layout = ImagePreparationConfig(layout=layout).layout
     directory = root(project_id)
     acquire(project_id)
     try:
@@ -102,7 +107,7 @@ def upload_pdf(project_id: str, file: UploadFile = File(...)):
             raise HTTPException(400, "请上传不超过 50MB 的有效 PDF")
         path = directory / "input.pdf"
         path.write_bytes(content)
-        return prepare(project_id, directory, [path])
+        return prepare(project_id, directory, [path], layout)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     finally:
@@ -110,7 +115,8 @@ def upload_pdf(project_id: str, file: UploadFile = File(...)):
 
 
 @router.post("/projects/{project_id}/score/prepare")
-def prepare_crops(project_id: str):
+def prepare_crops(project_id: str, layout: str = 'auto'):
+    layout = ImagePreparationConfig(layout=layout).layout
     directory = root(project_id)
     acquire(project_id)
     try:
@@ -118,7 +124,62 @@ def prepare_crops(project_id: str):
                         if path.suffix.lower() in (".png", ".jpg", ".jpeg"))
         if not inputs:
             raise HTTPException(400, "没有视频截图，请先处理视频或导入 PDF")
-        return prepare(project_id, directory, inputs)
+        return prepare(project_id, directory, inputs, layout)
+    finally:
+        release(project_id)
+
+
+@router.post('/projects/{project_id}/score/refresh-images')
+def refresh_images(project_id: str, config: ImagePreparationConfig):
+    """Re-crop the same input while preserving transcription and review state."""
+    directory = root(project_id)
+    acquire(project_id)
+    try:
+        old = read_json(directory / 'manifest.json', {'rows': [], 'rejected': []})
+        score = Score.model_validate(read_json(directory / 'score.json', Score().model_dump()))
+        if any('source_row' not in row for row in old['rows']) and score.measures:
+            raise HTTPException(409, '旧谱行缺少原始位置，无法安全对应已校对内容；请备份后在另一项目重新导入。')
+        is_pdf = old['rows'] and all(row['source'].startswith('PDF 第 ') for row in old['rows'])
+        inputs = [directory / 'input.pdf'] if is_pdf else sorted(
+            path for path in storage.crops_dir(project_id).iterdir() if path.suffix.lower() in ('.png', '.jpg', '.jpeg'))
+        if not inputs or any(not path.is_file() for path in inputs):
+            raise HTTPException(400, '原始输入不存在，请重新导入 PDF 或读取视频截图。')
+        old_keys = {(row['source'], row.get('source_row')): row for row in old['rows']}
+        with tempfile.TemporaryDirectory(prefix='.refresh-', dir=directory) as temporary:
+            staged = Path(temporary)
+            manifest = prepare_images(inputs, staged, layout=config.layout)
+            mapping = {}
+            pending = []
+            for row in manifest['rows']:
+                original = old_keys.get((row['source'], row['source_row']))
+                image = staged / row['id']
+                suffix = hashlib.sha256(image.read_bytes()).hexdigest()[:12]
+                row['id'] = f"{image.stem}_{suffix}.png"
+                pending.append((image, directory / 'rows' / row['id']))
+                if original:
+                    mapping[original['id']] = row['id']
+                    for field in ('excluded', 'exclude_reason'):
+                        if field in original:
+                            row[field] = original[field]
+            if any(measure.source not in mapping for measure in score.measures):
+                raise HTTPException(409, '新裁图无法对应部分已有小节，原数据保持不变；请检查谱面类型或在另一项目导入。')
+            snapshot = directory / 'backups' / ('images-' + uuid.uuid4().hex)
+            snapshot.mkdir(parents=True)
+            write_json(snapshot / 'manifest.json', old)
+            write_json(snapshot / 'score.json', score.model_dump())
+            # Keep old images in place so each snapshot remains recoverable.
+            for image, target in pending:
+                if not target.exists():
+                    shutil.copy2(image, target)
+            for measure in score.measures:
+                measure.source = mapping[measure.source]
+            task = read_json(directory / 'task.json', {'status': 'idle', 'log': []})
+            task['log'].append(f'已更新完整谱行图片；保留 {len(score.measures)} 个已有小节及其核对标记。错误的已核对内容需先取消核对再重新识别。')
+            with _json_lock:
+                write_json(directory / 'score.json', score.model_dump())
+                write_json(directory / 'manifest.json', manifest)
+                write_json(directory / 'task.json', task)
+            return manifest
     finally:
         release(project_id)
 

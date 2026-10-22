@@ -4,7 +4,7 @@ type Note = { string: number; fret: number; kind?: string; slide?: boolean; lega
 type Beat = { duration: number; dotted?: boolean; triplet?: boolean; unresolved?: ('pitch' | 'duration')[]; notes: Note[] }
 type Measure = { number: number; numerator: number; denominator: number; confidence: number; reviewed: boolean; source: string; issues: string[]; beats: Beat[] }
 type Score = { title: string; instrument: 'bass' | 'guitar'; tempo: number; tuning: number[]; settings_confirmed: boolean; measures: Measure[] }
-type Row = { id: string; source: string; source_row?: number; strings: number; excluded?: boolean; exclude_reason?: string }
+type Row = { id: string; source: string; source_row?: number; layout?: 'tab' | 'standard-tab'; strings: number; excluded?: boolean; exclude_reason?: string }
 type Issue = { message: string; measure: number | null; severity: string }
 type Data = { score: Score; validation: Issue[]; draft_validation?: Issue[]; manifest: { rows: Row[]; rejected: { source: string; reason: string }[] }; task: { status: string; current?: number; total?: number; log: string[] } }
 
@@ -25,6 +25,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
   const [model, setModel] = useState('')
   const [provider, setProvider] = useState('ollama')
   const [strategy, setStrategy] = useState('hybrid')
+  const [layout, setLayout] = useState('auto')
   const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:11434')
   const [limit, setLimit] = useState(3)
   const [force, setForce] = useState(false)
@@ -95,20 +96,34 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
     <h3>转换为 Guitar Pro 谱（加速试用版）</h3>
     <p>先整理谱面，再识别与核对，最后下载 .gp5。第一版建议先试前 3 行。</p>
     <p>已有核对标记的谱行会自动保留。需要重新识别该行时，请先取消该行所有小节的核对标记。</p>
+    <div className="score-fields"><label>谱面类型<select disabled={active} value={layout} onChange={e => setLayout(e.target.value)}>
+      <option value="auto">自动判断</option><option value="tab">纯 TAB（保留原识别方式）</option><option value="standard-tab">五线谱＋TAB（上方读取节奏）</option>
+    </select></label></div>
     <div className="result-actions">
-      <button className="btn" disabled={active} onClick={() => perform(async () => { await call(base + '/prepare', { method: 'POST' }); setSelected(0); await load() })}>读取当前视频截图</button>
+      <button className="btn" disabled={active} onClick={() => perform(async () => { await call(base + '/prepare?layout=' + layout, { method: 'POST' }); setSelected(0); await load() })}>读取当前视频截图</button>
       <label className="btn">导入 PDF<input type="file" accept="application/pdf,.pdf" disabled={active} style={{ display: 'none' }} onChange={e => {
         const file = e.target.files?.[0]; e.target.value = ''; if (!file) return
-        perform(async () => { const form = new FormData(); form.append('file', file); await call(base + '/pdf', { method: 'POST', body: form }); setSelected(0); await load() })
+        perform(async () => { const form = new FormData(); form.append('file', file); await call(base + '/pdf?layout=' + layout, { method: 'POST', body: form }); setSelected(0); await load() })
       }} /></label>
+      <button className="btn" disabled={active || !data?.manifest.rows.length} onClick={() => perform(async () => {
+        await save()
+        await call(base + '/refresh-images', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ layout }) })
+        await load(); setNotice('图片已更新，原有小节及核对标记已保留。错误的已核对内容需先取消核对再重识别。')
+      })}>更新谱行图片（保留校对）</button>
     </div>
+    <p>纯 TAB 沿用原来的本地数字、符干与符尾识别；五线谱＋TAB 使用独立的逐小节视觉识别，需要选择视觉模型。切换类型后，请更新谱行图片或重新导入。</p>
     {!!data?.manifest.rows.length && <>
       <p>可识别 {totalRows - skippedRows} 行谱面{skippedRows > 0 ? `（共检测 ${totalRows} 行，已跳过 ${skippedRows} 行）` : ''}。请检查过滤结果和弦线识别是否正确。</p>
       <select aria-label="原始谱面行" value={selected} onChange={e => setSelected(Number(e.target.value))}>
-        {data.manifest.rows.map((r, i) => <option key={r.id} value={i}>第 {i + 1} 行 · {r.source}{r.source_row ? ` · 页内第 ${r.source_row} 行` : ''} · {r.strings} 根弦{r.excluded ? ' · 已跳过' : ''}</option>)}
+        {data.manifest.rows.map((r, i) => <option key={r.id} value={i}>第 {i + 1} 行 · {r.source}{r.source_row ? ` · 页内第 ${r.source_row} 行` : ''} · {r.layout === 'standard-tab' ? '五线谱＋TAB' : '纯 TAB'} · {r.strings} 根弦{r.excluded ? ' · 已跳过' : ''}</option>)}
       </select>
       {row && <a href={`${base}/rows/${row.id}`} target="_blank" rel="noreferrer"><img src={`${base}/rows/${row.id}`} alt={`谱面 ${row.id}`} style={{ width: '100%', background: 'white', marginTop: 8 }} /></a>}
       {row && <>
+        {editing?.measures.some(m => m.source === row.id && m.reviewed) && <button className="btn" disabled={active} onClick={() => perform(async () => {
+          const next = JSON.parse(draft) as Score
+          next.measures.filter(m => m.source === row.id).forEach(m => { m.reviewed = false })
+          await save(next); setNotice('已取消此行核对标记，音符数据保留；下次识谱可更新此行。')
+        })}>取消此行核对，允许重识别</button>}
         {row.excluded && <p>此行已跳过：{row.exclude_reason}。原图保留。</p>}
         <button className="btn" disabled={active} onClick={() => perform(async () => {
           await save()
@@ -131,7 +146,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
     {provider === 'compatible' && <p>此模式会将谱面发送到所填地址；密钥由本机环境变量 TAB_VISION_API_KEY 提供。</p>}
     <button className="btn btn-primary" disabled={active || (strategy === 'vision' && !model) || !data?.manifest.rows.length} onClick={() => perform(async () => {
       await save()
-      await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy, base_url: baseUrl, model, max_rows: limit, force }) })
+      await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy, layout, base_url: baseUrl, model, max_rows: limit, force }) })
       await load()
     })}>{data?.task.status === 'recognizing' ? `识谱中 ${data.task.current || 0}/${data.task.total || 0}` : '开始识谱'}</button>
     {data && <>

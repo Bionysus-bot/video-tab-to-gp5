@@ -54,12 +54,17 @@ class Score(StrictModel):
 
 
 class RecognitionConfig(StrictModel):
+    layout: Literal['auto', 'tab', 'standard-tab'] = 'auto'
     strategy: Literal['hybrid', 'vision'] = 'hybrid'
     provider: Literal["ollama", "compatible"] = "ollama"
     base_url: str = "http://127.0.0.1:11434"
     model: str = ""
     max_rows: int = Field(default=3, ge=1, le=200)
     force: bool = False
+
+
+class ImagePreparationConfig(StrictModel):
+    layout: Literal['auto', 'tab', 'standard-tab'] = 'auto'
 
 
 class RecognitionResult(StrictModel):

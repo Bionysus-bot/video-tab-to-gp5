@@ -79,7 +79,31 @@ def bar_positions(image: np.ndarray, lines: list[int]) -> list[int]:
     return peaks
 
 
-def prepare_images(inputs: list[Path], output: Path) -> dict:
+def notation_staves(image: np.ndarray, groups: list[list[int]]) -> list[list[int]]:
+    """Pair faint five-line notation with the TAB directly below it."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    margin = max(1, image.shape[1] // 30)
+    profile = np.percentile(gray[:, margin:-margin], 75, axis=1).astype(np.float32).reshape(-1, 1)
+    contrast = (cv2.morphologyEx(profile, cv2.MORPH_CLOSE, np.ones((15, 1), np.uint8)) - profile)[:, 0]
+    peaks = _line_peaks(contrast, 3)
+    paired = []
+    for tab in groups:
+        tab_spacing = float(np.median(np.diff(tab)))
+        candidates = []
+        for index in range(len(peaks) - 4):
+            five = peaks[index:index + 5]
+            gaps = np.diff(five)
+            spacing = float(np.median(gaps))
+            if (.45 * tab_spacing <= spacing <= tab_spacing
+                    and max(abs(gaps - spacing)) <= max(1, spacing * .2)
+                    and 1.5 * spacing < tab[0] - five[-1] < 8 * spacing
+                    and not any(five[0] <= group[-1] and group[0] <= five[-1] for group in groups)):
+                candidates.append(five)
+        paired.append(max(candidates, key=lambda lines: lines[-1]) if candidates else [])
+    return paired
+
+
+def prepare_images(inputs: list[Path], output: Path, layout: str = 'auto') -> dict:
     output.mkdir(parents=True, exist_ok=True)
     rows = []
     rejected = []
@@ -93,14 +117,22 @@ def prepare_images(inputs: list[Path], output: Path) -> dict:
         if not groups:
             rejected.append(dict(source=source, reason="未检测到四至六根等距弦线，可能是黑屏、片尾或模糊帧，请复查"))
             return
+        notation = notation_staves(image, groups) if layout != 'tab' else [[] for _ in groups]
         for index, group in enumerate(groups):
             spacing = int(np.median(np.diff(group)))
             y0 = max(0, group[0] - spacing * 4)
+            upper = notation[index]
+            if layout == 'standard-tab' and not upper:
+                rejected.append(dict(source=source, reason=f'第 {index + 1} 组弦线上方未找到完整五线谱，请复查谱面类型'))
+                continue
+            if upper:
+                y0 = max(0, upper[0] - round(float(np.median(np.diff(upper))) * 6))
             y1 = min(image.shape[0], group[-1] + spacing * 5)
             if index:
-                y0 = max(y0, (groups[index - 1][-1] + group[0]) // 2)
+                y0 = max(y0, (groups[index - 1][-1] + (upper[0] if upper else group[0])) // 2)
             if index + 1 < len(groups):
-                y1 = min(y1, (group[-1] + groups[index + 1][0]) // 2)
+                next_top = notation[index + 1][0] if notation[index + 1] else groups[index + 1][0]
+                y1 = min(y1, (group[-1] + next_top) // 2)
             crop = image[y0:y1].copy()
             # Only byte-identical adjacent rows are skipped. Musical similarity is
             # not enough evidence: repeated phrases may be distinct measures.
@@ -109,10 +141,13 @@ def prepare_images(inputs: list[Path], output: Path) -> dict:
             previous = crop
             name = f"row_{len(rows) + 1:04d}.png"
             imwrite(str(output / name), crop)
-            rows.append(dict(id=name, source=source, source_row=index + 1, strings=len(group),
+            metadata = dict(id=name, source=source, source_row=index + 1, strings=len(group), layout='tab',
                              lines=[y - y0 for y in group],
                              bars=bar_positions(crop, [y - y0 for y in group]),
-                             width=crop.shape[1], height=crop.shape[0]))
+                             width=crop.shape[1], height=crop.shape[0])
+            if upper:
+                metadata.update(layout='standard-tab', notation_lines=[y - y0 for y in upper])
+            rows.append(metadata)
 
     for path in inputs:
         if path.suffix.lower() == ".pdf":
