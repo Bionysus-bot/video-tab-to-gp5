@@ -23,14 +23,21 @@ def export_diagnostic(score, destination):
     for measure in score.measures:
         groups[measure.number].append(measure)
     report = dict(description='Inspection only. UNREADABLE bars contain placeholder rests, not transcribed music.',
-                  settings_confirmed=score.settings_confirmed, placeholders=[])
+                  settings_confirmed=score.settings_confirmed, placeholders=[],uncertain=[])
     meter = (score.measures[0].numerator,score.measures[0].denominator)
     for number in range(1,max(groups)+1):
         candidates = groups[number]
         reasons = []
+        uncertain_beats = []
         if len(candidates) == 1:
             measure = candidates[0].model_copy(deep=True)
             meter = (measure.numerator,measure.denominator)
+            for index,beat in enumerate(measure.beats):
+                if 'pitch' in beat.unresolved and beat.notes:
+                    # Inspection export retains the actual machine candidate;
+                    # only the copy relaxes pitch uncertainty, never duration.
+                    beat.unresolved.remove('pitch')
+                    uncertain_beats.append(index+1)
             draft.measures.append(measure)
             reasons = [i['message'] for i in validate_score(draft,require_review=False)
                        if i['severity']=='error' and i['measure']==number]
@@ -41,16 +48,22 @@ def export_diagnostic(score, destination):
             measure = TabMeasure(number=number,numerator=meter[0],denominator=meter[1],
                                  beats=[TabBeat(duration=meter[1]) for _ in range(meter[0])])
             report['placeholders'].append(dict(number=number,reasons=list(dict.fromkeys(reasons))))
+        elif uncertain_beats or measure.confidence < .85:
+            report['uncertain'].append(dict(number=number,beats=uncertain_beats,confidence=measure.confidence))
         draft.measures.append(measure)
     export_gp5(draft,destination,require_review=False)
     song = guitarpro.parse(str(destination))
+    for item in report['uncertain']:
+        song.measureHeaders[item['number']-1].marker = gp.Marker(title=f"CHECK BAR {item['number']} - LOW CONFIDENCE")
+        for beat in item['beats']:
+            song.tracks[0].measures[item['number']-1].voices[0].beats[beat-1].text = 'CHECK PITCH - MACHINE CANDIDATE'
     for item in report['placeholders']:
         song.measureHeaders[item['number']-1].marker = gp.Marker(title=f"UNREADABLE BAR {item['number']} - PLACEHOLDER ONLY")
     temporary = destination.with_suffix('.marked.gp5')
     guitarpro.write(song,str(temporary),version=(5,1,0))
     parsed = guitarpro.parse(str(temporary))
     if len(parsed.measureHeaders)!=len(draft.measures) or any(
-            parsed.measureHeaders[item['number']-1].marker is None for item in report['placeholders']):
+            parsed.measureHeaders[item['number']-1].marker is None for item in report['placeholders']+report['uncertain']):
         raise ValueError('诊断草稿标记回读失败')
     temporary.replace(destination)
     destination.with_suffix('.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')

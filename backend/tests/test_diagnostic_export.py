@@ -34,3 +34,25 @@ class DiagnosticExportTests(unittest.TestCase):
 
     def test_invalid_empty_score_is_rejected(self):
         with self.assertRaises(ValueError):export_diagnostic(Score(),Path('unused.gp5'))
+
+    def test_uncertain_pitch_candidate_is_playable_and_marked_without_changing_source(self):
+        score=Score(settings_confirmed=True,measures=[TabMeasure(number=1,confidence=.3,
+            beats=[TabBeat(duration=1,notes=[TabNote(string=3,fret=7)],unresolved=['pitch'])])])
+        before=score.model_dump()
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'draft.gp5';report=export_diagnostic(score,path)
+            parsed=guitarpro.parse(str(path))
+            self.assertEqual(report['placeholders'],[])
+            self.assertEqual(report['uncertain'][0]['beats'],[1])
+            self.assertIn('CHECK',parsed.measureHeaders[0].marker.title)
+            beat=parsed.tracks[0].measures[0].voices[0].beats[0]
+            self.assertEqual(beat.notes[0].value,7)
+            self.assertIn('CHECK PITCH',beat.text)
+        self.assertEqual(score.model_dump(),before)
+
+    def test_uncertain_duration_is_not_silently_cleared(self):
+        score=Score(measures=[TabMeasure(number=1,beats=[TabBeat(duration=1,
+            notes=[TabNote(string=3,fret=7)],unresolved=['duration'])])])
+        with tempfile.TemporaryDirectory() as directory:
+            report=export_diagnostic(score,Path(directory)/'draft.gp5')
+            self.assertEqual(report['placeholders'][0]['number'],1)
