@@ -283,6 +283,9 @@ def read_combined_local(path, row, tuning, diagnostics=None):
                 stem = candidates[0]
                 duration, unknown = stem_duration(gray, stem, stem['head'][0], spacing)
                 unresolved.extend(unknown)
+            baseline=[s for s in stems if left+3<s['x']<right-3 and abs(s['x']-center)<spacing*1.1]
+            old_stem=min(baseline,key=lambda s:min(abs(s['x']-center+spacing*.55),abs(s['x']-center-spacing*.55))) if baseline else None
+            old_rhythm=stem_duration(gray,old_stem,center,spacing) if old_stem else (4,['duration'])
             notes = []
             for cell in group:
                 if cell['text'].isdigit() and int(cell['text']) <= 36:
@@ -307,6 +310,7 @@ def read_combined_local(path, row, tuning, diagnostics=None):
                 stem=[candidates[0]['x']/factor,candidates[0]['top']/factor,candidates[0]['bottom']/factor] if candidates else None,
                 confidence=min(c['confidence'] for c in group),
                 template=any(c.get('template_score') for c in group)))
+            event_traces[-1]['baseline']=(old_rhythm,old_stem)
             event_traces[-1].update(head_detected=candidates[0].get('head_detected',False) if candidates else False,
                                    beam_group=candidates[0].get('beam_group',0) if candidates else 0)
             centers.append(center)
@@ -319,6 +323,30 @@ def read_combined_local(path, row, tuning, diagnostics=None):
             confidences.extend([.9]*len(rests))
             # A rest ends the preceding note; do not permit ties across it.
             previous = beats[-1].notes
+        # A new association must not replace a complete, visually supported old
+        # reading with an incomplete rhythm. Both candidates come from pixels;
+        # no durations are invented or searched solely to make the meter fit.
+        def length(items):
+            return sum((Fraction(1,b.duration)*(Fraction(3,2) if b.dotted else 1)*(Fraction(2,3) if b.triplet else 1) for b in items),Fraction(0))
+        expected=Fraction(1)
+        alternate=[]
+        for beat in beats:
+            event=next((e for e in event_traces if e['beat'] is beat),None)
+            copy=beat.model_copy(deep=True)
+            if event:
+                (copy.duration,flags),_=event['baseline']
+                copy.unresolved=[v for v in copy.unresolved if v!='duration']+list(flags)
+            alternate.append(copy)
+        if length(alternate)==expected and not any('duration' in b.unresolved for b in alternate) and (
+                length(beats)!=expected or any('duration' in b.unresolved for b in beats)):
+            for beat,alternative in zip(beats,alternate):
+                event=next((e for e in event_traces if e['beat'] is beat),None)
+                beat.duration=alternative.duration;beat.unresolved=alternative.unresolved
+                if event:
+                    old=event['baseline'][1]
+                    event.update(head_detected=False,beam_group=0)
+                    if old:event.update(stem=[old['x']/factor,old['top']/factor,old['bottom']/factor],
+                        head=[event['x'],(old['top'] if event['x']*factor>=old['x'] else old['bottom'])/factor])
         if not beats:
             if _whole_rest(gray, staff, left, right, spacing):
                 beats = [TabBeat(duration=1)]
@@ -358,7 +386,7 @@ def read_combined_local(path, row, tuning, diagnostics=None):
             for bi,beat in enumerate(measure.beats):
                 entry=next((e for e in event_traces if e['beat'] is beat),None)
                 if entry:
-                    diagnostics['events'].append(dict({k:v for k,v in entry.items() if k!='beat'},
+                    diagnostics['events'].append(dict({k:v for k,v in entry.items() if k not in ('beat','baseline')},
                         measure=measure.number,beat_index=bi+1,duration=beat.duration,unresolved=beat.unresolved,
                         notes=[n.model_dump() for n in beat.notes],fragment=bool(side)))
         if not side:number = measure.number + 1

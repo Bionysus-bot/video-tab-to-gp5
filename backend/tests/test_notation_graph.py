@@ -4,6 +4,7 @@ import tempfile
 import json
 import httpx
 from pathlib import Path
+from unittest.mock import patch
 
 from app.models.score import TabMeasure,TabBeat,TabNote
 from app.services.notation_graph import align_events
@@ -15,6 +16,37 @@ from app.models.score import RecognitionConfig
 
 
 class GraphAndReviewTests(unittest.TestCase):
+    def test_bad_new_association_keeps_the_visible_four_quarter_notes(self):
+        from tests.test_combined_tab import combined_image
+        from app.services.combined_local import read_combined_local
+        from app.services.image_io import imwrite
+        image,row,figures=combined_image([4]*4)
+        graph=[dict(x=round(c['x_center']-9.6),top=122,bottom=196,head=[c['x_center'],122],
+                    down=True,head_detected=True,beam_group=2) for c in figures]
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'row.png';imwrite(path,image);evidence={}
+            with patch('app.services.combined_local._glyphs',return_value=(figures,None,None)), \
+                 patch('app.services.combined_local._printed_number',return_value=1), \
+                 patch('app.services.notation_graph.attach_heads',return_value=graph), \
+                 patch('app.services.notation_graph.connect_beams'):
+                result=read_combined_local(path,row,[43,38,33,28],evidence)
+        self.assertEqual([b.duration for b in result.measures[0].beats],[4]*4)
+        self.assertTrue(all(not e['head_detected'] for e in evidence['events'] if not e['fragment']))
+
+    def test_three_visible_quarters_are_not_filled_to_make_four(self):
+        from tests.test_combined_tab import combined_image
+        from app.services.combined_local import read_combined_local
+        from app.services.image_io import imwrite
+        image,row,figures=combined_image([4]*3)
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'row.png';imwrite(path,image)
+            with patch('app.services.combined_local._glyphs',return_value=(figures,None,None)), \
+                 patch('app.services.combined_local._printed_number',return_value=1):
+                result=read_combined_local(path,row,[43,38,33,28])
+        self.assertEqual(len(result.measures[0].beats),3)
+        self.assertTrue(any('时值不完整' in i['message'] for i in validate_score(
+            Score(settings_confirmed=True,measures=result.measures),require_review=False)))
+
     def test_ordered_alignment_never_reuses_a_stem(self):
         events=[dict(head=[100,50],x=95),dict(head=[130,50],x=125)]
         result=align_events([101,105,131],events,20)
