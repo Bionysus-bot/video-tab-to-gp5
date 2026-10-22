@@ -55,7 +55,7 @@ class Score(StrictModel):
 
 class RecognitionConfig(StrictModel):
     layout: Literal['auto', 'tab', 'standard-tab'] = 'auto'
-    strategy: Literal['hybrid', 'vision'] = 'hybrid'
+    strategy: Literal['hybrid', 'vision', 'repair'] = 'hybrid'
     provider: Literal["ollama", "compatible"] = "ollama"
     base_url: str = "http://127.0.0.1:11434"
     model: str = ""

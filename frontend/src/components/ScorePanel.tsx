@@ -149,6 +149,12 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
       await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy, layout, base_url: baseUrl, model, max_rows: limit, force }) })
       await load()
     })}>{data?.task.status === 'recognizing' ? `识谱中 ${data.task.current || 0}/${data.task.total || 0}` : '开始识谱'}</button>
+    <button className="btn" disabled={active || !model || !editing?.measures.length} onClick={() => perform(async () => {
+      await save()
+      await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy: 'repair', layout, base_url: baseUrl, model, max_rows: limit, force }) })
+      await load()
+    })}>模型修复错误小节</button>
+    <p>模型修复会先备份，在所选前几行中复读有错误的联合谱小节（包括已标记核对的小节），每小节最多两次。通过结构校验才替换并取消该小节核对；无错误的内容保留。模型仍可能误读，跨行缺失小节暂不能补回。</p>
     {data && <>
       <div className="score-fields">
         <label>乐器<select disabled={active} value={editing?.instrument || 'bass'} onChange={e => changeSettings({ instrument: e.target.value as 'bass' | 'guitar', tuning: e.target.value === 'bass' ? [43, 38, 33, 28] : [64, 59, 55, 50, 45, 40], settings_confirmed: false })}><option value="bass">贝斯（默认四弦）</option><option value="guitar">吉他（默认六弦）</option></select></label>

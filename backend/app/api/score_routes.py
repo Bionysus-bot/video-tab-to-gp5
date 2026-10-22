@@ -240,7 +240,15 @@ def run_recognition(project_id, directory, config, manifest, score):
             task["generated_chars"] = 0
             context_row = {**row, 'start_number': next_number, 'previous_notes': previous_notes}
             existing = sorted([m for m in score.measures if m.source == row['id']], key=lambda m:m.number)
-            if any(m.reviewed for m in existing):
+            if config.strategy == 'repair':
+                from app.services.model_repair import repair_combined
+                if row.get('layout') != 'standard-tab' or not existing:
+                    result = RecognitionResult(measures=existing, warnings=['模型修复仅处理已有五线谱＋TAB 小节，此行已保留。'])
+                else:
+                    result = repair_combined(directory / 'rows' / row['id'], context_row, config, score.tuning,
+                                             existing, recognize_row, on_progress=progress,
+                                             cache_directory=directory / 'cache/model-repair')
+            elif any(m.reviewed for m in existing):
                 # Preserve human corrections, including a partly reviewed row.
                 # Unchecking that row's reviews explicitly allows a fresh read.
                 result = RecognitionResult(measures=[m.model_copy(deep=True) for m in existing],
@@ -304,7 +312,7 @@ def run_recognition(project_id, directory, config, manifest, score):
 @router.post("/projects/{project_id}/score/recognize")
 def recognize(project_id: str, config: RecognitionConfig):
     directory = root(project_id)
-    if config.strategy == 'vision' and not config.model.strip():
+    if config.strategy in ('vision', 'repair') and not config.model.strip():
         raise HTTPException(400, "请选择模型")
     acquire(project_id)
     try:
@@ -312,6 +320,11 @@ def recognize(project_id: str, config: RecognitionConfig):
         if not manifest["rows"]:
             raise HTTPException(400, "请先整理截图或导入 PDF")
         score = Score.model_validate(read_json(directory / "score.json", Score().model_dump()))
+        if config.strategy == 'repair':
+            snapshot = directory / 'backups' / ('model-repair-' + uuid.uuid4().hex)
+            snapshot.mkdir(parents=True)
+            write_json(snapshot / 'score.json', score.model_dump())
+            write_json(snapshot / 'manifest.json', manifest)
         write_json(directory / "task.json", {"status": "recognizing", "current": 0, "total": min(config.max_rows, len(manifest["rows"])), "log": []})
         threading.Thread(target=run_recognition, args=(project_id, directory, config, manifest, score), daemon=True).start()
         return {"status": "recognizing"}
