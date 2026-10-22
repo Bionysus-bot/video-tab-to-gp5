@@ -74,14 +74,14 @@ class ModelRepairTests(unittest.TestCase):
             app = FastAPI(); app.include_router(router, prefix='/api')
             from app.api.score_routes import release
             try:
-                with patch('app.api.score_routes.threading.Thread') as worker:
+                with patch('app.api.score_routes.start_recognition_worker') as worker:
                     response = TestClient(app).post(f'/api/projects/{pid}/score/recognize',
                                                    json=dict(strategy='repair', model='test'))
                     self.assertEqual(response.status_code, 200, response.text)
                     backups = list((directory/'backups').glob('model-repair-*/score.json'))
                     self.assertEqual(len(backups), 1)
                     self.assertEqual(json.loads(backups[0].read_text(encoding='utf-8'))['measures'][0], original)
-                    worker.return_value.start.assert_called_once()
+                    worker.assert_called_once()
                     self.assertEqual(json.loads((directory/'score.json').read_text(encoding='utf-8')), saved)
             finally:
                 release(pid)

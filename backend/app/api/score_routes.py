@@ -320,6 +320,10 @@ def run_recognition(project_id, directory, config, manifest, score):
             release(project_id)
 
 
+def start_recognition_worker(project_id,directory,config,manifest,score):
+    threading.Thread(target=run_recognition,args=(project_id,directory,config,manifest,score),daemon=True).start()
+
+
 @router.post("/projects/{project_id}/score/recognize")
 def recognize(project_id: str, config: RecognitionConfig):
     directory = root(project_id)
@@ -337,7 +341,7 @@ def recognize(project_id: str, config: RecognitionConfig):
             write_json(snapshot / 'score.json', score.model_dump())
             write_json(snapshot / 'manifest.json', manifest)
         write_json(directory / "task.json", {"status": "recognizing", "current": 0, "total": min(config.max_rows, len(manifest["rows"])), "log": []})
-        threading.Thread(target=run_recognition, args=(project_id, directory, config, manifest, score), daemon=True).start()
+        start_recognition_worker(project_id,directory,config,manifest,score)
         return {"status": "recognizing"}
     except Exception:
         release(project_id)
