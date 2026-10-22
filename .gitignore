@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+.env
+venv/
+.venv/
+
+# Node
+node_modules/
+dist/
+frontend/dist/
+*.tsbuildinfo
+
+# Storage
+storage/projects/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+*.tmp
+*.log
+.runtime/
+tmp/pdfs/
+
+# Codex
+.codex/
+
+# Vite temp cache
+frontend/node_modules/.vite/
+
+# Local exports and publishing workspace
+output/
+tmp/
+.release/
+*.zip
+.env.*
+!.env.example
+
+# Optional regression media supplied by users (not distributed)
+backend/tests/fixtures/
+backend/tests/test_local_tab_reader_private.py
