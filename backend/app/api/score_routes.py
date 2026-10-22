@@ -417,3 +417,19 @@ def export_draft(project_id: str):
 def download_draft(project_id: str):
     export_draft(project_id)
     return FileResponse(root(project_id)/'score-draft.gp5',filename='score-draft.gp5',media_type='application/octet-stream')
+
+
+@router.get('/projects/{project_id}/score/download-diagnostic')
+def download_diagnostic(project_id: str):
+    from app.services.diagnostic_export import export_diagnostic
+    directory = root(project_id)
+    acquire(project_id)
+    try:
+        score=Score.model_validate(read_json(directory/'score.json',Score().model_dump()))
+        export_diagnostic(score,directory/'score-diagnostic.gp5')
+        return FileResponse(directory/'score-diagnostic.gp5',filename='score-diagnostic-INCOMPLETE.gp5',
+                            media_type='application/octet-stream')
+    except ValueError as exc:
+        raise HTTPException(422,str(exc)) from exc
+    finally:
+        release(project_id)

@@ -210,6 +210,11 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
       <p>时值：4=四分音符、8=八分音符；notes=[] 表示休止。弦号 1 是图中最上方的弦。修改数据后先保存并校验。</p>
       <details><summary>高级：完整乐谱数据（可修改滑音等属性）</summary><textarea aria-label="乐谱数据" disabled={active} value={draft} spellCheck={false} onChange={e => { setDraft(e.target.value); setDirty(true) }} style={{ width: '100%', minHeight: 240, fontFamily: 'monospace', boxSizing: 'border-box' }} /></details>
       <div className="result-actions">
+        <button className="btn" disabled={active || !editing?.measures.length} onClick={() => perform(async () => {
+          await save()
+          window.location.assign(base + '/download-diagnostic')
+          setNotice('诊断草稿中，无法识别的小节以占位休止和 UNREADABLE 标记展示；占位休止不代表原谱。')
+        })}>下载诊断 GP5（错误小节标记占位）</button>
         <button className="btn" disabled={active} onClick={() => perform(async () => { await save(); setNotice('已保存并校验') })}>保存并校验</button>
         <button className="btn" disabled={active || dirty || !data.score.measures.length || (data.draft_validation || data.validation).some(v => v.severity === 'error')} onClick={() => perform(async () => {
           await call(base + '/export-draft', { method: 'POST' }); setNotice('已生成尚未全部核对的草稿，请在 Guitar Pro 中检查。'); window.location.assign(base + '/download-draft')
@@ -223,7 +228,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
           await call(base + '/export', { method: 'POST' }); window.location.assign(base + '/download')
         })}>下载已核对 GP5</button>
       </div>
-      <p>音符和时值校验通过后，可以先下载草稿到 Guitar Pro 核对；未识别拍位和时值错误仍需修正。</p>
+      <p>有错误也可下载诊断 GP5：有效小节保留，错误或缺失小节显示 UNREADABLE 标记和占位休止，占位不代表原谱。完整草稿和已核对版本仍需通过相应校验。</p>
       {dirty && <p>有未保存的修改，请保存后导出。</p>}
       <div role="status">{[...data.validation].sort((a, b) => Number(b.severity === 'error') - Number(a.severity === 'error')).slice(0, 30).map((v, i) => <p key={i} style={{ color: v.severity === 'error' ? '#c44' : '#a76b00' }}>{v.measure ? `第 ${v.measure} 小节：` : ''}{v.message}</p>)}</div>
       <details open={data.task.status === 'failed'}><summary>识谱日志 · {data.task.status}</summary>{data.task.log.map((line, i) => <p key={i}>{line}</p>)}</details>
