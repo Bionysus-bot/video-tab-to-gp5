@@ -6,7 +6,7 @@ import tempfile
 import cv2
 import numpy as np
 
-from app.models.score import RecognitionResult
+from app.models.score import RecognitionResult, TabBeat, TabMeasure
 from app.services.image_io import imread, imwrite
 
 
@@ -38,7 +38,7 @@ def measure_image(image, row, bounds):
     return crop, metadata
 
 
-def check_vision_measure(measure):
+def check_vision_measure(measure, reader='视觉模型'):
     total = sum((Fraction(1, beat.duration) * (Fraction(3, 2) if beat.dotted else 1)
                  * (Fraction(2, 3) if beat.triplet else 1) for beat in measure.beats), Fraction(0))
     expected = Fraction(measure.numerator, measure.denominator)
@@ -46,15 +46,36 @@ def check_vision_measure(measure):
         for beat in measure.beats:
             if 'duration' not in beat.unresolved:
                 beat.unresolved.append('duration')
-        measure.issues.append('视觉模型返回的拍数与拍号不符，保留原结果供修正；未自动补拍。')
+        measure.issues.append(f'{reader}返回的拍数与拍号不符，保留原结果供修正；未自动补拍。')
     if 'confidence' not in measure.model_fields_set:
         measure.issues.append('视觉模型未提供识别置信度，请对照原图核对。')
     measure.reviewed = False
 
 
-def recognize_combined(path, row, config, tuning, recognize, client=None, on_progress=None):
+def recognize_combined(path, row, config, tuning, recognize, client=None, on_progress=None,
+                       cache_directory=None, on_cache_hit=None):
     if not row.get('notation_lines'):
         raise ValueError('五线谱＋TAB 需要完整上方五线谱，请先点击“更新谱行图片”并选择正确谱面类型。')
+    if config.strategy == 'hybrid':
+        from app.services.combined_local import read_combined_local
+        from app.services.local_tab_reader import UnsupportedTabImage
+        from app.services.recognition_cache import cache_key, load_result, store_result
+        try:
+            context = {**row, 'engine': 'combined-local'}
+            key = cache_key(path, context, tuning) if cache_directory is not None else None
+            if key and not config.force:
+                cached = load_result(cache_directory, key)
+                if cached is not None:
+                    if on_cache_hit:
+                        on_cache_hit()
+                    return cached
+            local = read_combined_local(path, row, tuning)
+            if key and key == cache_key(path, context, tuning):
+                store_result(cache_directory, key, local)
+            return local
+        except UnsupportedTabImage:
+            if not config.model.strip():
+                raise
     if not config.model.strip():
         raise ValueError('五线谱＋TAB 使用独立的逐小节视觉识别，请选择支持图片的视觉模型。')
     image = imread(path)
@@ -83,7 +104,10 @@ def recognize_combined(path, row, config, tuning, recognize, client=None, on_pro
                              tuning, client=client, on_progress=progress)
             offset += size
             if len(part.measures) != 1:
-                result.warnings.append(f'本行第 {index + 1} 个完整小节：模型返回 {len(part.measures)} 小节，未接受，请核对原图。')
+                message = f'本行第 {index + 1} 个完整小节：模型返回 {len(part.measures)} 小节，未接受，请核对原图。'
+                result.warnings.append(message)
+                result.measures.append(TabMeasure(number=number, source=row['id'], issues=[message],
+                    beats=[TabBeat(duration=4, unresolved=['pitch', 'duration'])]))
                 number += 1
                 result.warnings.extend(part.warnings)
                 continue

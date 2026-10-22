@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import uuid
+from typing import Literal
 from pathlib import Path
 
 import httpx
@@ -97,8 +98,7 @@ def prepare(project_id, directory, inputs, layout='auto'):
 
 
 @router.post("/projects/{project_id}/score/pdf")
-def upload_pdf(project_id: str, file: UploadFile = File(...), layout: str = 'auto'):
-    layout = ImagePreparationConfig(layout=layout).layout
+def upload_pdf(project_id: str, file: UploadFile = File(...), layout: Literal['auto', 'tab', 'standard-tab'] = 'auto'):
     directory = root(project_id)
     acquire(project_id)
     try:
@@ -115,8 +115,7 @@ def upload_pdf(project_id: str, file: UploadFile = File(...), layout: str = 'aut
 
 
 @router.post("/projects/{project_id}/score/prepare")
-def prepare_crops(project_id: str, layout: str = 'auto'):
-    layout = ImagePreparationConfig(layout=layout).layout
+def prepare_crops(project_id: str, layout: Literal['auto', 'tab', 'standard-tab'] = 'auto'):
     directory = root(project_id)
     acquire(project_id)
     try:

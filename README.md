@@ -2,7 +2,7 @@
 
 把视频里的动态 TAB 谱提取成 PDF，再把截图或已有 PDF 转成可编辑的 Guitar Pro 5（`.gp5`）文件。适用于吉他、贝斯的数字指法谱，提供本地识谱、人工校对和导出。
 
-**当前为识谱加速试验分支 `codex/recognition-speed`，尚未合并主分支。** 增加本地 OCR 线程调整和逐行缓存，保留原有识别规则与人工核对保护。试用、整曲对照和回退方法见 [加速试用说明](docs/RECOGNITION_SPEED.md)。
+**当前为联合谱试用分支 `codex/combined-tab-wip`，尚未合并主分支。** 保留原纯 TAB 读取器，新增独立的“五线谱＋TAB”本地读取、类型选择和保留校对的裁图更新。[两种谱面使用说明与限制](docs/COMBINED_TAB.md)。整曲联合谱仍有待修正项，不能视为完整转谱成功。此前的 [识谱加速试用和回退说明](docs/RECOGNITION_SPEED.md) 保留。
 
 **非商业使用：自 v0.1.1 起新授权的原创新增内容禁止用于商业用途，未经相应权利人书面许可，不得用于收费转谱、商业产品或变现服务。** 上游及已按 MIT 发布的内容保留原许可，本声明不追溯取消其既有权限。完整适用范围见 [LICENSE](LICENSE) 和 [版权与使用说明](docs/COPYRIGHT.md)。
 
@@ -59,6 +59,7 @@ ffprobe -version
 ```powershell
 git clone https://github.com/Bionysus-bot/video-tab-to-gp5.git
 cd video-tab-to-gp5
+git switch codex/combined-tab-wip
 
 py -3.12 -m venv backend/.venv
 ./backend/.venv/Scripts/python.exe -m pip install --upgrade pip
@@ -106,6 +107,8 @@ powershell -ExecutionPolicy Bypass -File ./start.ps1 -Port 8001
 视频截图和 PDF 是两种输入方式，任选一种即可。重新导入 PDF 或重新读取截图会重建谱行、清空该项目现有转谱数据；重要结果请先下载或备份。
 
 ### 识谱、校对与导出
+
+先选择“谱面类型”。纯 TAB 沿用原识别方式；五线谱＋TAB 从上方读取节奏、下方读取品位。已有项目切换类型后，点击 **更新谱行图片（保留校对）**；错误的已核对行可通过 **取消此行核对，允许重识别** 明确放开重识别权限。详见 [联合谱试用说明](docs/COMBINED_TAB.md)。
 
 1. **选乐器、填速度。** 默认是四弦贝斯标准调弦；吉他可切换为六弦。默认速度 `120` 是占位值，需改成实际 BPM。特殊调弦在高级数据中修改，按最高音弦到最低音弦填写 MIDI 音高。
 2. **先试少量谱行。** 保持默认的本地优先策略，先识别前 3 行；效果合适后再提高行数。这里的数字表示“从开头处理前几行”，不是“接着处理几行”。

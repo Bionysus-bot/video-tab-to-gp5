@@ -97,7 +97,10 @@ def notation_staves(image: np.ndarray, groups: list[list[int]]) -> list[list[int
             if (.45 * tab_spacing <= spacing <= tab_spacing
                     and max(abs(gaps - spacing)) <= max(1, spacing * .2)
                     and 1.5 * spacing < tab[0] - five[-1] < 8 * spacing
-                    and not any(five[0] <= group[-1] and group[0] <= five[-1] for group in groups)):
+                    and not any(five[0] <= group[-1] and group[0] <= five[-1]
+                                and not (len(group) == 5 and abs(group[0] - five[0]) <= 3
+                                         and abs(group[-1] - five[-1]) <= 3 and spacing < tab_spacing * .85)
+                                for group in groups)):
                 candidates.append(five)
         paired.append(max(candidates, key=lambda lines: lines[-1]) if candidates else [])
     return paired
@@ -118,6 +121,12 @@ def prepare_images(inputs: list[Path], output: Path, layout: str = 'auto') -> di
             rejected.append(dict(source=source, reason="未检测到四至六根等距弦线，可能是黑屏、片尾或模糊帧，请复查"))
             return
         notation = notation_staves(image, groups) if layout != 'tab' else [[] for _ in groups]
+        # Strong standard staves may also pass the original line detector.
+        # Pair them with the lower TAB instead of exposing a false five-string row.
+        keep = [i for i, group in enumerate(groups) if not any(
+            upper and abs(group[0] - upper[0]) <= 3 and abs(group[-1] - upper[-1]) <= 3
+            and len(group) == 5 for upper in notation)]
+        groups, notation = [groups[i] for i in keep], [notation[i] for i in keep]
         for index, group in enumerate(groups):
             spacing = int(np.median(np.diff(group)))
             y0 = max(0, group[0] - spacing * 4)

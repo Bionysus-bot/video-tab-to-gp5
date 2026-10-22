@@ -47,3 +47,4 @@ tmp/
 # Optional regression media supplied by users (not distributed)
 backend/tests/fixtures/
 backend/tests/test_local_tab_reader_private.py
+backend/tests/test_combined_local_private.py

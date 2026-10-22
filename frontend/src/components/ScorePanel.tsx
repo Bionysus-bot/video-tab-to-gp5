@@ -111,7 +111,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
         await load(); setNotice('图片已更新，原有小节及核对标记已保留。错误的已核对内容需先取消核对再重识别。')
       })}>更新谱行图片（保留校对）</button>
     </div>
-    <p>纯 TAB 沿用原来的本地数字、符干与符尾识别；五线谱＋TAB 使用独立的逐小节视觉识别，需要选择视觉模型。切换类型后，请更新谱行图片或重新导入。</p>
+    <p>纯 TAB 沿用原识别；五线谱＋TAB 使用独立本地流程，从上方读取节奏、下方读取品位，也可选择逐小节视觉模型。切换类型后，请更新谱行图片或重新导入。新类型仍需人工校对。</p>
     {!!data?.manifest.rows.length && <>
       <p>可识别 {totalRows - skippedRows} 行谱面{skippedRows > 0 ? `（共检测 ${totalRows} 行，已跳过 ${skippedRows} 行）` : ''}。请检查过滤结果和弦线识别是否正确。</p>
       <select aria-label="原始谱面行" value={selected} onChange={e => setSelected(Number(e.target.value))}>

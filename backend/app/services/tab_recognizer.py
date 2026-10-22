@@ -40,7 +40,8 @@ def recognize_row(path: Path, row: dict, config: RecognitionConfig, tuning: list
     layout = row.get('layout', 'tab') if config.layout == 'auto' else config.layout
     if layout == 'standard-tab':
         from app.services.combined_tab import recognize_combined
-        return recognize_combined(path, row, config, tuning, recognize_row, client, on_progress)
+        return recognize_combined(path, row, config, tuning, recognize_row, client, on_progress,
+                                  cache_directory, on_cache_hit)
     if config.strategy == 'hybrid':
         try:
             key = cache_key(path, row, tuning) if cache_directory is not None else None
