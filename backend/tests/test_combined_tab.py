@@ -92,7 +92,7 @@ class CombinedTabTests(unittest.TestCase):
         measure=TabMeasure(number=1,beats=[TabBeat(duration=4,notes=[TabNote(string=4,fret=7)])])
         check_vision_measure(measure)
         self.assertEqual(len(measure.beats),1)
-        self.assertIn('duration',measure.beats[0].unresolved)
+        self.assertNotIn('duration',measure.beats[0].unresolved)
         self.assertTrue(any(i['severity']=='error' for i in validate_score(Score(settings_confirmed=True,measures=[measure]),require_review=False)))
 
     def test_empty_vision_result_cannot_silently_remove_a_complete_measure(self):

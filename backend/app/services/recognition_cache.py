@@ -21,7 +21,7 @@ def reader_signature() -> str:
     services = Path(__file__).resolve().parent
     files = [services / name for name in (
         'local_tab_reader.py', 'image_io.py', 'tab_recognizer.py', 'recognition_cache.py',
-        'combined_tab.py', 'combined_local.py', 'model_repair.py', 'score_continuity.py')]
+        'combined_tab.py', 'combined_local.py', 'model_repair.py', 'score_continuity.py','notation_graph.py')]
     files.append(services.parent / 'models/score.py')
     versions = {}
     for name in ('rapidocr-onnxruntime', 'onnxruntime', 'numpy', 'opencv-python'):

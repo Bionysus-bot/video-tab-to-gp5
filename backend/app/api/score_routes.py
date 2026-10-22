@@ -433,3 +433,35 @@ def download_diagnostic(project_id: str):
         raise HTTPException(422,str(exc)) from exc
     finally:
         release(project_id)
+
+
+@router.get('/projects/{project_id}/score/rows/{filename}/analysis')
+def row_analysis(project_id: str,filename: str):
+    from app.services.score_analysis import analyze_row
+    directory=root(project_id)
+    manifest=read_json(directory/'manifest.json',{'rows':[]})
+    row=next((r for r in manifest['rows'] if r['id']==filename),None)
+    if row is None:raise HTTPException(404,'谱行不存在')
+    if row.get('layout')!='standard-tab':raise HTTPException(400,'叠加分析目前用于五线谱＋TAB，纯TAB识别保持原方式')
+    acquire(project_id)
+    try:
+        score=Score.model_validate(read_json(directory/'score.json',Score().model_dump()))
+        current=[m for m in score.measures if m.source==filename]
+        start=min((m.number for m in current),default=row.get('number_floor',1))
+        previous=next((m for m in reversed(score.measures) if m.number<start),None)
+        context=dict(row,start_number=start,previous_notes=[n.model_dump() for n in previous.beats[-1].notes] if previous and previous.beats else [])
+        output=directory/'analysis';output.mkdir(exist_ok=True)
+        result=analyze_row(directory/'rows'/filename,context,score.tuning,output/(filename+'.png'))
+        write_json(output/(filename+'.json'),result)
+        return result
+    finally:release(project_id)
+
+
+@router.get('/projects/{project_id}/score/rows/{filename}/analysis-image')
+def row_analysis_image(project_id: str,filename: str):
+    directory=root(project_id)
+    manifest=read_json(directory/'manifest.json',{'rows':[]})
+    if filename not in {r['id'] for r in manifest['rows']}:raise HTTPException(404,'谱行不存在')
+    path=directory/'analysis'/(filename+'.png')
+    if not path.exists():raise HTTPException(404,'请先生成识别位置叠加图')
+    return FileResponse(path,media_type='image/png')

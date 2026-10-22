@@ -1,11 +1,12 @@
 """Local reader for aligned standard notation above TAB, independent of TAB rhythm rules."""
 import re
 from collections import Counter
+from fractions import Fraction
 
 import cv2
 import numpy as np
 
-from app.models.score import RecognitionResult, TabBeat, TabMeasure, TabNote
+from app.models.score import RecognitionResult, TabBeat, TabMeasure, TabNote,TabFragment
 from app.services.combined_tab import check_vision_measure, measure_regions
 from app.services.image_io import imread
 from app.services.local_tab_reader import UnsupportedTabImage, _glyphs, _text_crop, read_text, spans
@@ -15,6 +16,7 @@ def standard_stems(gray, staff, tab_top):
     spacing = float(np.median(np.diff(staff)))
     bottom = min(gray.shape[0], round(tab_top - spacing * 1.8))
     ink = (gray[:bottom] < 225).astype(np.uint8)
+    ink[:max(0,round(staff[0]-spacing*3))]=0
     vertical = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, np.ones((3, 1), np.uint8))
     vertical = cv2.morphologyEx(vertical, cv2.MORPH_OPEN, np.ones((max(8, round(spacing * 1.6)), 1), np.uint8))
     stems = []
@@ -28,7 +30,7 @@ def standard_stems(gray, staff, tab_top):
 
 def stem_duration(gray, stem, center, spacing):
     # Down-stem heads lie to the right of the stem; up-stem heads lie to its left.
-    down = center >= stem['x']
+    down = stem.get('down',center >= stem['x'])
     end = stem['bottom'] if down else stem['top']
     y0, y1 = (end - round(spacing * 2.1), end + 5) if down else (end - 5, end + round(spacing * 2.1))
     counts = []
@@ -41,6 +43,9 @@ def stem_duration(gray, stem, center, spacing):
                 if spacing * .1 <= b - a <= spacing * .85]
         counts.append(len(runs))
     beams = max(counts, default=0)
+    grouped=stem.get('beam_group',0)
+    if grouped:
+        beams=min(max(beams,grouped),grouped+1)
     if beams:
         return 4 * 2 ** min(beams, 4), []
     # Only accept an unbeamed quarter when there is a visibly filled head.
@@ -209,7 +214,8 @@ def standard_rests(gray, staff, left, right, spacing, note_centers):
     return rests
 
 
-def read_combined_local(path, row, tuning):
+def read_combined_local(path, row, tuning, diagnostics=None):
+    from app.services.notation_graph import attach_heads,align_events,template_refine,connect_beams
     if len(row['lines']) != len(tuning) or len(row.get('notation_lines', [])) != 5:
         raise UnsupportedTabImage('联合谱的五线谱或弦数不完整')
     original = imread(path)
@@ -233,13 +239,26 @@ def read_combined_local(path, row, tuning):
         if re.fullmatch(r'\d{1,2}',text) and int(text) <= 36 and confidence >= .8:
             cell.update(text=text,confidence=float(confidence))
     figures = bracketed_figures(figures, image, tab_spacing,cv2.cvtColor(normalized,cv2.COLOR_GRAY2BGR))
+    template_refine(figures,image)
     stems = standard_stems(gray, staff, lines[0])
     result = RecognitionResult(measures=[], warnings=[
         '使用独立联合谱本地流程：TAB 数字对应上方符干、符尾及休止；拍号暂按 4/4，需核对。未能确认连续的边缘片段不自动补齐。'])
     previous = [TabNote.model_validate(note) for note in row.get('previous_notes', [])]
     number = int(row.get('start_number', 1))
     numbers = row.get('measure_numbers') or number_sequence(original,row)[0]
-    for measure_index, bounds in enumerate(measure_regions(row)):
+    if diagnostics is not None:
+        diagnostics.update(width=original.shape[1],height=original.shape[0],events=[],measures=[])
+    full_regions=measure_regions(row)
+    work=[(bounds,'') for bounds in full_regions]
+    if full_regions:
+        for side,bounds in [('left',(0,full_regions[0][0])),('right',(full_regions[-1][1],original.shape[1]))]:
+            if bounds[1]-bounds[0]>tab_spacing/factor*3:
+                work.append((bounds,side))
+    for measure_index, (bounds,side) in enumerate(work):
+        if side:
+            fragment_number=result.measures[0].number-1 if side=='left' else result.measures[-1].number+1
+            if fragment_number<1:continue
+            previous=[] if side=='left' else result.measures[-1].beats[-1].notes
         left, right = [round(x * factor) for x in bounds]
         selected = sorted((cell for cell in figures if left + 3 < cell['x_center'] < right - 3), key=lambda c: c['x_center'])
         groups = []
@@ -249,18 +268,20 @@ def read_combined_local(path, row, tuning):
             else:
                 groups.append([cell])
         beats, confidences, centers = [], [], []
-        for group in groups:
+        graph=attach_heads(gray,stems,staff,left,right,spacing,[float(np.mean([c['x_center'] for c in group])) for group in groups])
+        connect_beams(gray,graph,spacing)
+        matched=align_events([float(np.mean([c['x_center'] for c in group])) for group in groups],graph,spacing)
+        event_traces=[]
+        for group_index,group in enumerate(groups):
             center = float(np.mean([cell['x_center'] for cell in group]))
-            candidates = [stem for stem in stems if left + 3 < stem['x'] < right - 3
-                          and abs(stem['x'] - center) < spacing * 1.1]
+            candidates = [matched[group_index]] if group_index in matched else []
             unresolved = []
             if not candidates:
                 duration = 4
                 unresolved.append('duration')
             else:
-                stem = min(candidates, key=lambda s: min(abs(s['x'] - center + spacing * .55),
-                                                        abs(s['x'] - center - spacing * .55)))
-                duration, unknown = stem_duration(gray, stem, center, spacing)
+                stem = candidates[0]
+                duration, unknown = stem_duration(gray, stem, stem['head'][0], spacing)
                 unresolved.extend(unknown)
             notes = []
             for cell in group:
@@ -280,6 +301,14 @@ def read_combined_local(path, row, tuning):
                     unresolved.append('pitch')
                 confidences.append(cell['confidence'])
             beats.append(TabBeat(duration=duration, notes=notes, unresolved=sorted(set(unresolved))))
+            event_traces.append(dict(beat=beats[-1],x=center/factor,
+                boxes=[[c['x']/factor,c['y']/factor,c['w']/factor,c['h']/factor] for c in group],
+                head=[v/factor for v in candidates[0]['head']] if candidates else None,
+                stem=[candidates[0]['x']/factor,candidates[0]['top']/factor,candidates[0]['bottom']/factor] if candidates else None,
+                confidence=min(c['confidence'] for c in group),
+                template=any(c.get('template_score') for c in group)))
+            event_traces[-1].update(head_detected=candidates[0].get('head_detected',False) if candidates else False,
+                                   beam_group=candidates[0].get('beam_group',0) if candidates else 0)
             centers.append(center)
             previous = notes
         whole_rest = not beats and _whole_rest(gray,staff,left,right,spacing)
@@ -297,8 +326,8 @@ def read_combined_local(path, row, tuning):
             else:
                 beats = [TabBeat(duration=4, unresolved=['pitch', 'duration'])]
                 confidences = [0]
-        printed = numbers[measure_index] if len(numbers) == len(measure_regions(row)) else _printed_number(image, staff, left, right, spacing)
-        if not numbers and printed is not None and ('number_floor' in row or 'start_number' in row) and not number <= printed <= number+2:
+        printed = fragment_number if side else numbers[measure_index] if len(numbers) == len(full_regions) else _printed_number(image, staff, left, right, spacing)
+        if not side and not numbers and printed is not None and ('number_floor' in row or 'start_number' in row) and not number <= printed <= number+2:
             printed = None
         issues = ['拍号暂按 4/4；请核对演奏法、附点、休止与反复，未通过校验时不自动补拍。']
         if printed is None:
@@ -309,8 +338,30 @@ def read_combined_local(path, row, tuning):
                              confidence=float(min(confidences, default=0)), issues=issues)
         # The same structural check is used for local and vision results.
         check_vision_measure(measure, '联合谱本地读取')
-        result.measures.append(measure)
-        number = measure.number + 1
+        if side:
+            measure.issues.append('边缘片段：未确认整小节覆盖，不自动计入完整曲谱。')
+            total=sum((Fraction(1,b.duration)*(Fraction(3,2) if b.dotted else 1)*(Fraction(2,3) if b.triplet else 1) for b in measure.beats),Fraction(0))
+            cov=np.mean(cv2.cvtColor(original,cv2.COLOR_BGR2GRAY)[row['lines']]<240,axis=0)
+            ends=np.flatnonzero(cov>=.75)
+            end=int(ends[-1])+1 if len(ends) else original.shape[1]
+            clear_edge=bool(selected) and max(c['x']+c['w'] for c in selected)/factor < end-tab_spacing/factor*.5
+            complete=bool(side=='right' and len(numbers)==len(full_regions) and clear_edge
+                          and len(matched)==len(groups) and groups and not any(b.unresolved for b in measure.beats)
+                          and total==Fraction(measure.numerator,measure.denominator))
+            if complete:
+                measure.issues[-1]='行末右侧边界未检出；逐音匹配、完整拍数与边缘检查通过，作为候选保留，请核对原图。'
+                result.measures.append(measure)
+            result.fragments.append(TabFragment(side=side,bounds=list(bounds),measure=measure,complete=complete))
+        else:result.measures.append(measure)
+        if diagnostics is not None:
+            if not side or complete:diagnostics['measures'].append(dict(number=measure.number,bounds=list(bounds),issues=measure.issues))
+            for bi,beat in enumerate(measure.beats):
+                entry=next((e for e in event_traces if e['beat'] is beat),None)
+                if entry:
+                    diagnostics['events'].append(dict({k:v for k,v in entry.items() if k!='beat'},
+                        measure=measure.number,beat_index=bi+1,duration=beat.duration,unresolved=beat.unresolved,
+                        notes=[n.model_dump() for n in beat.notes],fragment=bool(side)))
+        if not side:number = measure.number + 1
     if not result.measures:
         raise UnsupportedTabImage('联合谱没有可读的完整小节')
     return result

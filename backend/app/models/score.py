@@ -62,6 +62,7 @@ class RecognitionConfig(StrictModel):
     max_rows: int = Field(default=3, ge=1, le=200)
     force: bool = False
     rebuild: bool = False
+    local_review: bool = False
 
 
 class ImagePreparationConfig(StrictModel):
@@ -69,9 +70,17 @@ class ImagePreparationConfig(StrictModel):
     stitch: bool = False
 
 
+class TabFragment(StrictModel):
+    side: Literal['left','right']
+    bounds: list[int]
+    measure: TabMeasure
+    complete: bool = False
+
+
 class RecognitionResult(StrictModel):
     measures: list[TabMeasure]
     warnings: list[str] = Field(default_factory=list)
+    fragments: list[TabFragment] = Field(default_factory=list)
 
 
 class RowExclusion(StrictModel):

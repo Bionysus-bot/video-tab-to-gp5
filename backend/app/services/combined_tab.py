@@ -45,9 +45,6 @@ def check_vision_measure(measure, reader='视觉模型'):
                  * (Fraction(2, 3) if beat.triplet else 1) for beat in measure.beats), Fraction(0))
     expected = Fraction(measure.numerator, measure.denominator)
     if total != expected:
-        for beat in measure.beats:
-            if 'duration' not in beat.unresolved:
-                beat.unresolved.append('duration')
         measure.issues.append(f'{reader}返回的拍数与拍号不符，保留原结果供修正；未自动补拍。')
     if 'confidence' not in measure.model_fields_set:
         measure.issues.append('视觉模型未提供识别置信度，请对照原图核对。')

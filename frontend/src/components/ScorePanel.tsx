@@ -34,6 +34,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
   const [notice, setNotice] = useState('')
   const [selected, setSelected] = useState(0)
   const [dirty, setDirty] = useState(false)
+  const [analysis, setAnalysis] = useState<{row: string; stamp: number; fragments?: {side: string;candidate: Measure;complete: boolean}[]; events: {measure: number;beat_index: number;duration: number;confidence: number;unresolved: string[]}[]} | null>(null)
   const active = busy || data?.task.status === 'recognizing' || data?.task.status === 'preparing'
 
   async function load(updateDraft = true) {
@@ -119,6 +120,18 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
       </select>
       {row && <a href={`${base}/rows/${row.id}`} target="_blank" rel="noreferrer"><img src={`${base}/rows/${row.id}`} alt={`谱面 ${row.id}`} style={{ width: '100%', background: 'white', marginTop: 8 }} /></a>}
       {row && <>
+        {row.layout === 'standard-tab' && <button className="btn" disabled={active} onClick={() => perform(async () => {
+          const result=await call(`${base}/rows/${row.id}/analysis`)
+          setAnalysis({...result,row:row.id,stamp:Date.now()})
+        })}>查看识别位置叠加图</button>}
+        {analysis?.row === row.id && <div>
+          <p>这是重新分析的候选结果，尚未覆盖保存的乐谱。绿框：已关联；橙框：低置信；红框：具体未确定音符；蓝圈：检测到的音符头；紫圈：旧规则回退位置；橙色边框：未确认完整的边缘片段。</p>
+          <a href={`${base}/rows/${row.id}/analysis-image?v=${analysis.stamp}`} target="_blank" rel="noreferrer"><img src={`${base}/rows/${row.id}/analysis-image?v=${analysis.stamp}`} alt="音符与节奏对应位置" style={{width:'100%'}} /></a>
+          <details><summary>查看具体拍位与边缘片段</summary>
+            {analysis.events.filter(e => e.unresolved.length || e.confidence<.85).map(e=><p key={`${e.measure}-${e.beat_index}`}>第{e.measure}小节，第{e.beat_index}拍位：{e.duration}分音符；{e.unresolved.join('、') || '低置信候选保留'}</p>)}
+            {analysis.fragments?.map(f=><p key={f.side}>{f.side==='right'?'行末':'行首'}片段：候选第{f.candidate.number}小节，读出{f.candidate.beats.length}个拍位，{f.complete?'匹配和拍数检查通过，保留边界提示':'尚未确认完整'}。</p>)}
+          </details>
+        </div>}
         {editing?.measures.some(m => m.source === row.id && m.reviewed) && <button className="btn" disabled={active} onClick={() => perform(async () => {
           const next = JSON.parse(draft) as Score
           next.measures.filter(m => m.source === row.id).forEach(m => { m.reviewed = false })
@@ -151,9 +164,9 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
     })}>{data?.task.status === 'recognizing' ? `识谱中 ${data.task.current || 0}/${data.task.total || 0}` : '开始识谱'}</button>
     <button className="btn" disabled={active || !model || !editing?.measures.length} onClick={() => perform(async () => {
       await save()
-      await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy: 'repair', layout, base_url: baseUrl, model, max_rows: limit, force }) })
+      await call(base + '/recognize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, strategy: 'repair', local_review: true, layout, base_url: baseUrl, model, max_rows: limit, force }) })
       await load()
-    })}>模型修复错误小节</button>
+    })}>模型逐拍复核（保留其他音符）</button>
     <button className="btn" disabled={active || !data?.manifest.rows.some(r => r.layout === 'standard-tab')} onClick={() => perform(async () => {
       await save()
       await call(base + '/refresh-images', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ layout, stitch: true }) })
@@ -162,7 +175,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
       await load()
     })}>修复跨行和编号并重识谱（先备份）</button>
     <p>结构修复会拼接能够确认属于同一小节的相邻片段，并在所选前几行中重新识别联合谱，替换原有核对内容。缺少画面的片段会保留缺口提示，不会编造音符。</p>
-    <p>模型修复会先备份，在所选前几行中复读有错误的联合谱小节（包括已标记核对的小节），每小节最多两次。通过结构校验才替换并取消该小节核对；无错误的内容保留。模型仍可能误读，跨行缺失小节暂不能补回。</p>
+    <p>逐拍模型复核会先备份，在所选前几行中只修改有疑点的拍位字段（包括已标记核对但仍有错误的小节），保留其余音符和拍位顺序。不接受增加新错误或让拍数偏差变大的修改；仍无法确定时保留原值。</p>
     {data && <>
       <div className="score-fields">
         <label>乐器<select disabled={active} value={editing?.instrument || 'bass'} onChange={e => changeSettings({ instrument: e.target.value as 'bass' | 'guitar', tuning: e.target.value === 'bass' ? [43, 38, 33, 28] : [64, 59, 55, 50, 45, 40], settings_confirmed: false })}><option value="bass">贝斯（默认四弦）</option><option value="guitar">吉他（默认六弦）</option></select></label>
