@@ -198,14 +198,20 @@ def corroborate_pitches(events, staff_top, spacing, tuning):
     for event in events:
         beat=event['beat'];key=slot(event);strings=event.get('tab_strings',[])
         pitches=bank.get(key,[])
-        if ('pitch' not in beat.unresolved or len(strings)!=1 or len(pitches)<2
+        if (len(strings)!=1 or len(pitches)<2
                 or len(set(pitches))!=1):continue
         string=strings[0];fret=pitches[0]-tuning[string-1]
         if not 0<=fret<=36:continue
+        if 'pitch' not in beat.unresolved:
+            if len(beat.notes)==1 and beat.notes[0].string==string and beat.notes[0].fret==fret:
+                beat.pitch_evidence='staff'
+                event['pitch_evidence']='same-row detected head pitch corroborates OCR'
+            continue
         differs=beat.notes and any(n.string!=string or n.fret!=fret for n in beat.notes)
         if differs and event['confidence']>=.35:continue
         if not beat.notes or differs:beat.notes=[TabNote(string=string,fret=fret)]
         beat.unresolved.remove('pitch')
+        beat.pitch_evidence='staff'
         event['pitch_evidence']='same-row detected head pitch and visible TAB string; >=2 agreeing examples'
 
 

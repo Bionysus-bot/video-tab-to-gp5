@@ -7,6 +7,7 @@ from guitarpro import models as gp
 
 from app.models.score import TabBeat, TabMeasure
 from app.services.score_exporter import export_gp5, validate_score
+from app.services.reading_checks import measure_checks,reading_summary
 
 
 def export_diagnostic(score, destination):
@@ -23,14 +24,19 @@ def export_diagnostic(score, destination):
     for measure in score.measures:
         groups[measure.number].append(measure)
     report = dict(description='Inspection only. UNREADABLE bars contain placeholder rests, not transcribed music.',
-                  settings_confirmed=score.settings_confirmed, placeholders=[],uncertain=[])
+                  settings_confirmed=score.settings_confirmed, placeholders=[],uncertain=[],ocr_warnings=[])
     meter = (score.measures[0].numerator,score.measures[0].denominator)
     for number in range(1,max(groups)+1):
         candidates = groups[number]
         reasons = []
         uncertain_beats = []
+        checks=[]
         if len(candidates) == 1:
             measure = candidates[0].model_copy(deep=True)
+            checks=measure_checks(measure)
+            if reading_summary(measure)['legacy_ocr']:
+                report['ocr_warnings'].append(dict(number=number,score=measure.confidence,
+                    message='旧数据仅保存最低OCR分数，不能定位拍位或解释为正确率'))
             meter = (measure.numerator,measure.denominator)
             for index,beat in enumerate(measure.beats):
                 if 'pitch' in beat.unresolved and beat.notes:
@@ -48,8 +54,8 @@ def export_diagnostic(score, destination):
             measure = TabMeasure(number=number,numerator=meter[0],denominator=meter[1],
                                  beats=[TabBeat(duration=meter[1]) for _ in range(meter[0])])
             report['placeholders'].append(dict(number=number,reasons=list(dict.fromkeys(reasons))))
-        elif uncertain_beats or measure.confidence < .85:
-            report['uncertain'].append(dict(number=number,beats=uncertain_beats,confidence=measure.confidence))
+        elif checks:
+            report['uncertain'].append(dict(number=number,beats=uncertain_beats,confidence=measure.confidence,checks=checks))
         draft.measures.append(measure)
     if not report['placeholders']:
         draft.title='DIAGNOSTIC DRAFT - CHECK NOTES'
@@ -57,9 +63,12 @@ def export_diagnostic(score, destination):
     export_gp5(draft,destination,require_review=False)
     song = guitarpro.parse(str(destination))
     for item in report['uncertain']:
-        song.measureHeaders[item['number']-1].marker = gp.Marker(title=f"CHECK BAR {item['number']} - LOW CONFIDENCE")
-        for beat in item['beats']:
-            song.tracks[0].measures[item['number']-1].voices[0].beats[beat-1].text = 'CHECK PITCH - MACHINE CANDIDATE'
+        kinds='/'.join(sorted({c['kind'].upper() for c in item['checks']}))
+        song.measureHeaders[item['number']-1].marker = gp.Marker(title=f"CHECK {kinds} BAR {item['number']}")
+        for check in item['checks']:
+            beat=song.tracks[0].measures[item['number']-1].voices[0].beats[check['beat']-1]
+            label='CHECK '+check['kind'].upper()+' - MACHINE CANDIDATE'
+            beat.text=(beat.text+'; ' if beat.text else '')+label
     for item in report['placeholders']:
         song.measureHeaders[item['number']-1].marker = gp.Marker(title=f"UNREADABLE BAR {item['number']} - PLACEHOLDER ONLY")
     temporary = destination.with_suffix('.marked.gp5')

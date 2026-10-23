@@ -202,7 +202,9 @@ def get_score(project_id: str):
             task["status"] = "failed"
             task["log"].append("服务曾重启，任务已中断。已完成的数据保留，请重试。")
             write_json(directory / "task.json", task)
+    from app.services.reading_checks import reading_summary
     return {"score": score, "validation": validate_score(score),
+            "reading_checks": [reading_summary(m) for m in score.measures],
             "video_recovery": read_json(directory/'video-recovery.json',None),
             "draft_validation": validate_score(score,require_review=False),
             "manifest": read_json(directory / "manifest.json", {"rows": [], "rejected": []}),

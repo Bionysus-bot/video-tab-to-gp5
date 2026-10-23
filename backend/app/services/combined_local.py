@@ -334,7 +334,9 @@ def read_combined_local(path, row, tuning, diagnostics=None):
                 else:
                     unresolved.append('pitch')
                 confidences.append(cell['confidence'])
-            beats.append(TabBeat(duration=duration, notes=notes, unresolved=sorted(set(unresolved))))
+            beats.append(TabBeat(duration=duration, notes=notes, unresolved=sorted(set(unresolved)),
+                ocr_confidence=float(min(c['confidence'] for c in group)),pitch_evidence='ocr',
+                rhythm_evidence='notation' if candidates and candidates[0].get('head_detected') else 'fallback'))
             event_traces.append(dict(beat=beats[-1],x=center/factor,
                 boxes=[[c['x']/factor,c['y']/factor,c['w']/factor,c['h']/factor] for c in group],
                 head=[v/factor for v in candidates[0]['head']] if candidates else None,
@@ -376,6 +378,7 @@ def read_combined_local(path, row, tuning, diagnostics=None):
             for beat,alternative in zip(beats,alternate):
                 event=next((e for e in event_traces if e['beat'] is beat),None)
                 beat.duration=alternative.duration;beat.unresolved=alternative.unresolved
+                beat.rhythm_evidence='fallback'
                 if event:
                     old=event['baseline'][1]
                     event.update(head_detected=False,beam_group=0)

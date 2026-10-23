@@ -10,6 +10,25 @@ from app.services.score_exporter import validate_score
 
 
 class DiagnosticExportTests(unittest.TestCase):
+    def test_low_legacy_score_is_retained_as_information_not_a_whole_bar_error(self):
+        score=Score(measures=[TabMeasure(number=1,confidence=.1,beats=[TabBeat(duration=1,notes=[TabNote(string=3,fret=7)])])])
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'draft.gp5';report=export_diagnostic(score,path)
+            self.assertFalse(report['uncertain'])
+            self.assertEqual(report['ocr_warnings'][0]['number'],1)
+            self.assertIsNone(guitarpro.parse(str(path)).measureHeaders[0].marker)
+
+    def test_only_the_weak_unconfirmed_digit_gets_an_ocr_marker(self):
+        score=Score(measures=[TabMeasure(number=1,confidence=0,beats=[
+            TabBeat(duration=2,notes=[TabNote(string=3,fret=7)],ocr_confidence=.2,pitch_evidence='staff'),
+            TabBeat(duration=2,notes=[TabNote(string=3,fret=5)],ocr_confidence=.6,pitch_evidence='ocr')])])
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'draft.gp5';export_diagnostic(score,path);song=guitarpro.parse(str(path))
+            beats=song.tracks[0].measures[0].voices[0].beats
+            self.assertFalse(beats[0].text)
+            self.assertIn('CHECK OCR',beats[1].text)
+            self.assertNotIn('LOW CONFIDENCE',song.measureHeaders[0].marker.title)
+
     def test_missing_and_unreadable_bars_are_marked_and_valid_music_preserved(self):
         score=Score(settings_confirmed=True,measures=[
             TabMeasure(number=1,beats=[TabBeat(duration=1,notes=[TabNote(string=3,fret=7)])]),

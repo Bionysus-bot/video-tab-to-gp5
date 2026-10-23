@@ -26,6 +26,9 @@ class TabNote(StrictModel):
 
 
 class TabBeat(StrictModel):
+    ocr_confidence: float | None = Field(default=None,ge=0,le=1)
+    pitch_evidence: Literal['ocr','staff'] | None = None
+    rhythm_evidence: Literal['notation','fallback'] | None = None
     duration: Literal[1, 2, 4, 8, 16, 32, 64]
     dotted: bool = False
     triplet: bool = False

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 type Note = { string: number; fret: number; kind?: string; slide?: boolean; legato_slide?: boolean; slide_out?: 'down' | 'up' | null; hammer?: boolean; staccato?: boolean; grace?: { fret: number; duration: number; on_beat: boolean } | null }
-type Beat = { duration: number; dotted?: boolean; triplet?: boolean; unresolved?: ('pitch' | 'duration')[]; notes: Note[] }
+type Beat = { ocr_confidence?: number | null; pitch_evidence?: 'ocr' | 'staff' | null; rhythm_evidence?: 'notation' | 'fallback' | null; duration: number; dotted?: boolean; triplet?: boolean; unresolved?: ('pitch' | 'duration')[]; notes: Note[] }
 type Measure = { number: number; numerator: number; denominator: number; confidence: number; reviewed: boolean; source: string; issues: string[]; beats: Beat[] }
 type Score = { title: string; instrument: 'bass' | 'guitar'; tempo: number; tuning: number[]; settings_confirmed: boolean; measures: Measure[] }
 type Row = { id: string; source: string; source_row?: number; layout?: 'tab' | 'standard-tab'; strings: number; excluded?: boolean; exclude_reason?: string }
@@ -34,7 +34,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
   const [notice, setNotice] = useState('')
   const [selected, setSelected] = useState(0)
   const [dirty, setDirty] = useState(false)
-  const [analysis, setAnalysis] = useState<{row: string; stamp: number; fragments?: {side: string;candidate: Measure;complete: boolean}[]; events: {measure: number;beat_index: number;duration: number;confidence: number;unresolved: string[]}[]} | null>(null)
+  const [analysis, setAnalysis] = useState<{row: string; stamp: number; fragments?: {side: string;candidate: Measure;complete: boolean}[]; events: {measure: number;beat_index: number;duration: number;confidence: number;pitch_evidence?: string;unresolved: string[]}[]} | null>(null)
   const active = busy || data?.task.status === 'recognizing' || data?.task.status === 'preparing'
 
   async function load(updateDraft = true) {
@@ -84,6 +84,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
     editMeasure(mi, measure => {
       const beat = measure.beats[bi]
       update(beat)
+      if (resolved === 'pitch') { beat.ocr_confidence = null; beat.pitch_evidence = null }
       if (resolved) beat.unresolved = (beat.unresolved || []).filter(item => item !== resolved)
       measure.reviewed = false
     })
@@ -128,7 +129,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
           <p>这是重新分析的候选结果，尚未覆盖保存的乐谱。绿框：已关联；橙框：低置信；红框：具体未确定音符；蓝圈：检测到的音符头；紫圈：旧规则回退位置；橙色边框：未确认完整的边缘片段。</p>
           <a href={`${base}/rows/${row.id}/analysis-image?v=${analysis.stamp}`} target="_blank" rel="noreferrer"><img src={`${base}/rows/${row.id}/analysis-image?v=${analysis.stamp}`} alt="音符与节奏对应位置" style={{width:'100%'}} /></a>
           <details><summary>查看具体拍位与边缘片段</summary>
-            {analysis.events.filter(e => e.unresolved.length || e.confidence<.85).map(e=><p key={`${e.measure}-${e.beat_index}`}>第{e.measure}小节，第{e.beat_index}拍位：{e.duration}分音符；{e.unresolved.join('、') || '低置信候选保留'}</p>)}
+            {analysis.events.filter(e => e.unresolved.length || (e.confidence<.85 && !e.pitch_evidence)).map(e=><p key={`${e.measure}-${e.beat_index}`}>第{e.measure}小节，第{e.beat_index}拍位：{e.duration}分音符；{e.unresolved.map(k => k === 'pitch' ? '音高未确定' : '时值未确定').join('、') || '数字读数偏弱'}</p>)}
             {analysis.fragments?.map(f=><p key={f.side}>{f.side==='right'?'行末':'行首'}片段：候选第{f.candidate.number}小节，读出{f.candidate.beats.length}个拍位，{f.complete?'匹配和拍数检查通过，保留边界提示':'尚未确认完整'}。</p>)}
           </details>
         </div>}
@@ -196,12 +197,14 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
       <label><input disabled={active} type="checkbox" checked={editing?.settings_confirmed || false} onChange={e => changeSettings({ settings_confirmed: e.target.checked })} />我已确认乐器、速度和调弦</label>
       <h4>校对乐谱（已保存 {data.score.measures.length} 小节）</h4>
       {editing?.measures.map((m, mi) => <details key={mi} className="score-measure">
-        <summary>第 {m.number} 小节 · {m.numerator}/{m.denominator} · {m.reviewed ? '已核对' : '待核对'} · 置信度 {Math.round(m.confidence * 100)}%</summary>
+        <summary>第 {m.number} 小节 · {m.numerator}/{m.denominator} · {m.reviewed ? '已核对' : '待核对'} · {m.beats.some(b => b.unresolved?.length) ? '有具体疑点' : '无未确定拍位'}</summary>
         <button className="btn" disabled={active} onClick={() => { const index = data.manifest.rows.findIndex(r => r.id === m.source); if (index >= 0) setSelected(index) }}>查看对应原图</button>
         <label>小节编号<input type="number" disabled={active} value={m.number} onChange={e => editMeasure(mi, x => { x.number = Number(e.target.value); x.reviewed = false })} /></label>
         <label>拍号<input type="number" disabled={active} value={m.numerator} onChange={e => editMeasure(mi, x => { x.numerator = Number(e.target.value); x.reviewed = false })} /> / <select disabled={active} value={m.denominator} onChange={e => editMeasure(mi, x => { x.denominator = Number(e.target.value); x.reviewed = false })}>{[1, 2, 4, 8, 16, 32].map(n => <option key={n}>{n}</option>)}</select></label>
+        <p>数字识别分数用于筛选读数，不代表小节正确率。{!m.reviewed && m.confidence < .85 && m.beats.every(b => b.ocr_confidence == null) ? '旧数据仅有最低OCR分数，未记录具体位置；需查看原图，不能定位为某个音错误。' : ''}</p>
         {m.issues.map((issue, i) => <p key={i}>{issue}</p>)}
         {m.beats.map((b, bi) => <div key={bi} className="score-beat">
+          {b.ocr_confidence != null && <p>数字读数：{m.reviewed ? '已人工核对' : b.pitch_evidence === 'staff' ? '已获五线谱音高佐证' : b.ocr_confidence < .85 ? '偏弱，需对照原图' : 'OCR读数较清楚'}；节奏来源：{b.rhythm_evidence === 'notation' ? '音符头与符尾关联' : b.rhythm_evidence === 'fallback' ? '原图规则回退，建议核对' : '未记录'}。</p>}
           <span>第 {bi + 1} 拍位 </span><select aria-label="音符时值" disabled={active} value={b.duration} onChange={e => editBeat(mi, bi, 'duration', beat => { beat.duration = Number(e.target.value) })}>{[1, 2, 4, 8, 16, 32, 64].map(n => <option key={n} value={n}>{n === 1 ? '全音符' : `${n} 分音符`}</option>)}</select>
           <label><input type="checkbox" disabled={active} checked={b.dotted || false} onChange={e => editBeat(mi, bi, 'duration', beat => { beat.dotted = e.target.checked })} />附点</label>
           <label><input type="checkbox" disabled={active} checked={b.triplet || false} onChange={e => editBeat(mi, bi, 'duration', beat => { beat.triplet = e.target.checked })} />三连音</label>
@@ -252,7 +255,7 @@ export default function ScorePanel({ projectId }: { projectId: string }) {
           await call(base + '/export', { method: 'POST' }); window.location.assign(base + '/download')
         })}>下载已核对 GP5</button>
       </div>
-      <p>诊断 GP5 不因置信度低而丢弃已读出的音符，保留候选音并标 CHECK 待核对；缺失音符或时值错误的小节仍以 UNREADABLE 占位，占位不代表原谱。完整草稿和已核对版本仍需通过相应校验。</p>
+      <p>诊断 GP5 不因置信度低而丢弃已读出的音符，保留候选音；具体疑点标 CHECK PITCH，弱数字读数标 CHECK OCR；缺失音符或时值错误的小节仍以 UNREADABLE 占位，占位不代表原谱。完整草稿和已核对版本仍需通过相应校验。</p>
       {dirty && <p>有未保存的修改，请保存后导出。</p>}
       <div role="status">{[...data.validation].sort((a, b) => Number(b.severity === 'error') - Number(a.severity === 'error')).slice(0, 30).map((v, i) => <p key={i} style={{ color: v.severity === 'error' ? '#c44' : '#a76b00' }}>{v.measure ? `第 ${v.measure} 小节：` : ''}{v.message}</p>)}</div>
       <details open={data.task.status === 'failed'}><summary>识谱日志 · {data.task.status}</summary>{data.task.log.map((line, i) => <p key={i}>{line}</p>)}</details>

@@ -5,6 +5,7 @@ import guitarpro
 from guitarpro import models as gp
 
 from app.models.score import Score
+from app.services.reading_checks import reading_summary,measure_checks
 
 
 def validate_score(score: Score, *, require_review: bool = True) -> list[dict]:
@@ -37,9 +38,10 @@ def validate_score(score: Score, *, require_review: bool = True) -> list[dict]:
         if not measure.beats:
             add("小节没有节拍，整小节休止也需要填写时值。", n)
         total = Fraction(0)
-        for beat in measure.beats:
+        for position,beat in enumerate(measure.beats,1):
             if beat.unresolved:
-                add("存在未识别的音高或时值，请补全该拍位后再导出。", n)
+                labels='、'.join('音高' if k=='pitch' else '时值' for k in beat.unresolved)
+                add(f"第 {position} 拍位：{labels}尚未识别，请核对后再导出。", n)
             total += Fraction(1, beat.duration) * (Fraction(3, 2) if beat.dotted else 1) * (Fraction(2, 3) if beat.triplet else 1)
             seen = set()
             current = {}
@@ -62,7 +64,10 @@ def validate_score(score: Score, *, require_review: bool = True) -> list[dict]:
         if total != expected:
             add(f"时值不完整：合计 {total} 全音符，应为 {expected}（{measure.numerator}/{measure.denominator}）。弱起可使用实际拍号。", n)
         if measure.confidence < 0.85:
-            add("识别置信度偏低，请对照原图。", n, "warning")
+            if reading_summary(measure)['legacy_ocr']:
+                add("旧数据的最低OCR分数偏低，未保存具体位置；该分数不是整小节正确率。", n, "warning")
+        for check in measure_checks(measure):
+            if check['kind']=='ocr':add(f"第 {check['beat']} 拍位：{check['message']}。",n,'warning')
         for text in measure.issues:
             add(text, n, "warning")
     return issues
