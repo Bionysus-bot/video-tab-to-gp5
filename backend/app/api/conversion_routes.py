@@ -124,6 +124,12 @@ def confirm_measure(project:str,revision_id:str,measure_id:str,change:ScoreEdit)
         revision_id,measure_id,change.score,change.expected_revision))
 
 
+@router.post('/projects/{project}/revisions/{revision_id}/confirm-batch')
+def confirm_batch(project:str,revision_id:str,change:ScoreEdit):
+    return safe(lambda:repository(project).confirm_batch(
+        revision_id,change.score,change.expected_revision))
+
+
 @router.post('/projects/{project}/revisions/{revision_id}/activate')
 def activate(project:str,revision_id:str,change:Activation):
     safe(lambda:repository(project).activate(revision_id,change.expected_revision))

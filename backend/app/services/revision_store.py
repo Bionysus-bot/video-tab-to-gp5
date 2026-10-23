@@ -217,6 +217,44 @@ class RevisionStore:
                 raise ValueError('此小节暂不能确认：'+'；'.join(dict.fromkeys(errors)))
             return self.save_edit(revision_id,candidate,expected)
 
+    def confirm_batch(self, revision_id, score, expected):
+        """Accept all unreviewed bars in one revision, retaining invalid bars verbatim."""
+        from app.services.score_exporter import validate_score
+        with LOCK:
+            old = self.get(revision_id)
+            if len(score.measures) != len(old['score']['measures']):
+                raise ValueError('小节结构已改变，请重新加载。')
+            candidate = score.model_copy(deep=True)
+            pending = [i for i, m in enumerate(score.measures) if not m.reviewed]
+            reasons = {}
+            for index in pending:
+                measure = candidate.measures[index]
+                missing = [f'第 {bi} 拍位缺少音符，请补全音符或明确设为休止后再确认。'
+                           for bi, beat in enumerate(measure.beats, 1)
+                           if 'pitch' in beat.unresolved and not beat.notes]
+                if missing:
+                    reasons[index] = missing
+                    continue
+                for beat in measure.beats:
+                    beat.unresolved = []
+                measure.reviewed = True
+            # Validate once with all proposed acceptances, including cross-bar ties.
+            errors = validate_score(candidate, require_review=False)
+            confirmed, skipped = [], []
+            for index in pending:
+                measure = candidate.measures[index]
+                problems = reasons.get(index, []) + [item['message'] for item in errors
+                    if item['severity'] == 'error' and item['measure'] == measure.number]
+                item = dict(measure_id=old['entities'][index]['id'], number=measure.number)
+                if problems:
+                    candidate.measures[index] = score.measures[index].model_copy(deep=True)
+                    skipped.append(dict(**item, reasons=list(dict.fromkeys(problems))))
+                else:
+                    confirmed.append(item)
+            # save_edit performs the same conflict and structure checks as individual edits.
+            revision = self.save_edit(revision_id, candidate, expected)
+            return dict(revision=revision, confirmed=confirmed, skipped=skipped)
+
     def activate(self, revision_id, expected):
         with LOCK:
             self.get(revision_id)

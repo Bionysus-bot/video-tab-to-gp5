@@ -302,3 +302,11 @@
 .measure-confirmation p { margin-top: 12px; color: var(--text-muted); font-size: 12px; max-width: 65ch; }
 @media(max-width:959px) { .measure-confirmation { flex-direction: column; align-items: flex-start; } }
 .editor-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
+
+.studio .batch-confirmation{display:flex;align-items:center;justify-content:space-between;gap:32px;margin:32px 0 40px;padding:24px 0;border-bottom:.5px solid var(--border)}
+.studio .batch-confirmation p{max-width:65ch;margin:8px 0 0;font-size:13px;color:var(--text-muted)}
+.studio .batch-confirmation .button{flex-shrink:0}
+.studio .batch-report{margin:0 0 40px;max-width:75ch;font-size:14px;line-height:1.9}
+.studio .batch-report summary{cursor:pointer;color:var(--text)}
+.studio .batch-report li{margin:12px 0}
+@media(max-width:760px){.studio .batch-confirmation{align-items:flex-start;flex-direction:column;gap:20px}.studio .batch-report{overflow-wrap:anywhere}}

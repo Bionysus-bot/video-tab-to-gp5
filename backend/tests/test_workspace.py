@@ -22,6 +22,68 @@ def sample():
 
 
 class WorkspaceTests(unittest.TestCase):
+    def test_batch_confirmation_skips_invalid_bars_and_preserves_prior_version(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=RevisionStore(folder);score=sample()
+            score.measures[0].beats[0].duration=1
+            score.measures[0].issues=['边缘片段候选：待核对']
+            for number in range(2,6):
+                measure=score.measures[0].model_copy(deep=True);measure.number=number
+                score.measures.append(measure)
+            score.measures[1].beats[0].duration=4
+            score.measures[2].beats[0].notes=[]
+            score.measures[3].reviewed=True;score.measures[3].beats[0].unresolved=[]
+            # Explicitly identified rests can be confirmed; unknown missing notes cannot.
+            score.measures[4].beats[0].notes=[];score.measures[4].beats[0].unresolved=[]
+            old=store.create(score,origin='local-read',activate=True)
+            score.measures[0].beats[0].notes[0].fret=12
+            result=store.confirm_batch(old['id'],score,old['id'])
+            revision=result['revision']
+            self.assertEqual([m['number'] for m in result['confirmed']],[1,5])
+            self.assertEqual([m['number'] for m in result['skipped']],[2,3])
+            self.assertIn('时值不完整','；'.join(result['skipped'][0]['reasons']))
+            self.assertIn('缺少音符','；'.join(result['skipped'][1]['reasons']))
+            self.assertEqual(len(store.list()),2)
+            self.assertEqual(store.get(old['id']),old)
+            self.assertEqual(revision['score']['measures'][1:4],score.model_dump()['measures'][1:4])
+            path=Path(folder)/'batch.gp5'
+            export_partial(Score.model_validate(revision['score']),path)
+            song=guitarpro.parse(str(path))
+            self.assertIsNone(song.measureHeaders[0].marker)
+            self.assertFalse(song.tracks[0].measures[0].voices[0].beats[0].text)
+            self.assertEqual(song.tracks[0].measures[0].voices[0].beats[0].notes[0].value,12)
+            self.assertIsNotNone(song.measureHeaders[1].marker)
+            self.assertIsNone(song.measureHeaders[4].marker)
+
+    def test_batch_confirmation_api_rejects_stale_and_restructured_edits_atomically(self):
+        with tempfile.TemporaryDirectory() as folder,patch.object(storage,'STORAGE_ROOT',Path(folder)):
+            pid=storage.create_project();store=RevisionStore(storage.output_path(pid,'score'))
+            score=sample();old=store.create(score,origin='local-read',activate=True)
+            app=FastAPI();app.include_router(router,prefix='/api');client=TestClient(app)
+            url=f'/api/projects/{pid}/revisions/{old["id"]}/confirm-batch'
+            score.measures[0].number=2
+            body=dict(expected_revision=old['id'],score=score.model_dump())
+            self.assertEqual(client.post(url,json=body).status_code,409)
+            self.assertEqual(len(store.list()),1)
+            score.measures[0].number=1;score.measures[0].beats[0].duration=1
+            body['score']=score.model_dump()
+            response=client.post(url,json=body)
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(len(response.json()['confirmed']),1)
+            self.assertEqual(client.post(url,json=body).status_code,409)
+            self.assertEqual(len(store.list()),2)
+
+    def test_batch_confirmation_retains_invalid_ties_and_all_skipped_edits(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=RevisionStore(folder);score=sample()
+            score.measures[0].beats[0].duration=1
+            score.measures[0].beats[0].notes[0].kind='tie'
+            old=store.create(score,origin='local-read',activate=True)
+            result=store.confirm_batch(old['id'],score,old['id'])
+            self.assertEqual(result['confirmed'],[])
+            self.assertEqual(result['revision']['score'],score.model_dump())
+            self.assertIn('延音','；'.join(result['skipped'][0]['reasons']))
+
     def test_confirmation_removes_only_selected_bar_markers_in_real_gp5(self):
         with tempfile.TemporaryDirectory() as folder:
             store=RevisionStore(folder);score=sample()

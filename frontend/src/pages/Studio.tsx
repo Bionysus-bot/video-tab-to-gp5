@@ -9,6 +9,7 @@ import MeasureEditor from '../components/MeasureEditor';
 import Botanical from '../components/Botanical';
 import '../studio.css';
 type View = 'prepare' | 'convert' | 'results';
+type BatchConfirmation = { revision: Revision; confirmed: { number: number }[]; skipped: { measure_id: string; number: number; reasons: string[] }[] };
 const labels: Record<string, string> = { pitch: '音高', duration: '时值', tie_or_technique: '延音 / 演奏法', fragment_gap: '片段缺失', number_conflict: '编号对应', settings_unconfirmed: '设置待确认', ocr_notice: '数字读数提醒' };
 const stageNames: Record<string, string> = { prepare: '整理谱面', read: '本地识别', validate: '校验结果', recover: '原视频补读', review: '局部复核', export: '生成草稿' };
 const originNames: Record<string, string> = { 'manual': '人工保存', 'legacy-import': '原项目结果', 'video-recovery-import': '原视频补读草稿', 'local-read': '本地识别', 'video-recovery': '视频补读', 'local-review': '模型复核' };
@@ -36,6 +37,7 @@ export default function Studio() {
     const [time, setTime] = useState(0);
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
+    const [batchResult, setBatchResult] = useState<BatchConfirmation | null>(null);
     const [busy, setBusy] = useState(false);
     const [selected, setSelected] = useState(0);
     const [filter, setFilter] = useState('important');
@@ -65,7 +67,7 @@ export default function Studio() {
     const running = activeJob(job);
     const root = project ? `/projects/${project}` : '';
     useEffect(() => { localStorage.setItem('score-studio-preferences', JSON.stringify({ model, review, provider, baseUrl })); }, [model, review, provider, baseUrl]);
-    const applyRevision = (value: Revision | null) => { setRevision(value); setDraft(value ? structuredClone(value.score) : null); setSelected(0); setDirty(false); };
+    const applyRevision = (value: Revision | null) => { setRevision(value); setDraft(value ? structuredClone(value.score) : null); setSelected(0); setDirty(false); setBatchResult(null); };
     const refresh = useCallback(async (pid: string, reset = true) => {
         const next = await call<WorkspaceData>(`/projects/${pid}/workspace`);
         if (current.current !== pid)
@@ -252,6 +254,21 @@ export default function Studio() {
             setMessage(`第 ${value.score.measures[index].number} 小节已确认，已更新草稿并去掉该小节的核对文字。其他未确认小节保留标注。`);
         });
     }
+    async function confirmBatch() {
+        if (!draft || !revision) return;
+        const index = selected, pid = project;
+        await perform(async () => {
+            const result = await call<BatchConfirmation>(root + `/revisions/${revision.id}/confirm-batch`, {
+                expected_revision: revision.id, score: draft
+            });
+            if (current.current !== pid) return;
+            applyRevision(result.revision); setSelected(index); setBatchResult(result);
+            setMessage(`已保存修改：批量确认 ${result.confirmed.length} 个小节，跳过 ${result.skipped.length} 个。正在更新草稿…`);
+            await call(root + `/revisions/${result.revision.id}/artifacts`, {});
+            await refresh(pid, false);
+            setMessage(`已批量确认 ${result.confirmed.length} 个小节并更新草稿，已确认小节不再显示核对文字。${result.skipped.length ? `跳过 ${result.skipped.length} 个小节，保留标注；可展开查看原因。` : ''}`);
+        });
+    }
     async function save() {
         if (!draft || !revision)
             return false;
@@ -333,6 +350,8 @@ export default function Studio() {
    </>}
    {view === 'results' && <><div className="page-heading"><Botanical variant={botanicalVariant}/><div><p className="eyebrow">你的乐谱</p><h1>先演奏，再细看。</h1><p>{draft ? `${draft.measures.length} 个小节 · ${issueCount} 个待确认项` : '还没有识谱结果。识谱完成后，草稿会出现在这里。'}</p></div><div className="button-row">{dirty ? <button className="button primary" disabled={busy} onClick={() => void createDraft(true)}>保存并下载草稿 ↓</button> : art ? <a className="button primary" href={`/api${root}/artifacts/${art.id}/download`}>下载 gp5 草稿 ↓</a> : <button className="button primary" disabled={!revision || busy} onClick={() => void createDraft()}>生成 gp5 草稿</button>}</div></div>
    {revision && draft ? <><div className="result-toolbar"><label className="floating-field"><span className="field-label">结果版本</span><select value={revision.id} onChange={e => { const id = e.target.value; guarded(() => { void selectVersion(id); }); }}>{data?.revisions.map(r => <option key={r.id} value={r.id}>{originNames[r.origin] || r.origin} · {new Date(r.created_at).toLocaleString()} · {r.measures} 小节</option>)}</select></label><span className="muted">{dirty ? '修改尚未保存' : '草稿不代表全部音符已准确'}</span>{art && <a className="text-button" href={`/api${root}/artifacts/${art.id}/issues`}>问题报告 ↗</a>}<button className="button secondary" disabled={!dirty || busy} onClick={() => perform(async () => { await save(); })}>保存修改</button></div>
+   <div className="batch-confirmation"><div><span>已核对全部待确认小节？</span><p>一次保存并确认所有未确认小节（不受疑点筛选影响）；时值错误或缺少音符的小节会跳过。</p></div><button className="button secondary" disabled={busy || !draft.measures.some(m => !m.reviewed)} onClick={() => void confirmBatch()}>批量确认待确认小节 · {draft.measures.filter(m => !m.reviewed).length}</button></div>
+   {batchResult && batchResult.revision.id === revision.id && batchResult.skipped.length > 0 && <details className="batch-report"><summary>查看跳过原因 · {batchResult.skipped.length} 个小节</summary><ul>{batchResult.skipped.map(item => <li key={item.measure_id}>第 {item.number} 小节：{item.reasons.join('；')}</li>)}</ul></details>}
    <div className="review-grid"><aside className="issue-queue"><div className="surface-heading"><h2>待确认</h2><span>{issues.length}</span></div><label className="sr-only" htmlFor="issue-filter">筛选疑点类型</label><select id="issue-filter" value={filter} onChange={e => setFilter(e.target.value)}><option value="important">主要疑点</option><option value="all">全部提示</option>{Object.entries(labels).map(([key, title]) => <option key={key} value={key}>{title}</option>)}</select><div className="issue-items">{issues.map(issue => <button key={issue.id} className={issue.measure_index === selected ? 'issue-item chosen' : 'issue-item'} onClick={() => guarded(() => {
                         if (issue.measure_index !== null)
                             setSelected(issue.measure_index);
