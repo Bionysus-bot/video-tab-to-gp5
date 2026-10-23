@@ -21,8 +21,8 @@ interface DragState {
 }
 
 const fields = [
-  { key: 'x', label: 'X（左边距）' },
-  { key: 'y', label: 'Y（上边距）' },
+  { key: 'x', label: '横向起点' },
+  { key: 'y', label: '纵向起点' },
   { key: 'width', label: '宽度' },
   { key: 'height', label: '高度' },
 ] as const
@@ -169,11 +169,11 @@ export default function ROISelector({
 
   return (
     <div className="roi-selector">
-      <div className="roi-label">拖拽选择乐谱区域（ROI）</div>
+      <div className="roi-label">拖拽选择谱面区域</div>
       <div
         ref={containerRef}
         className="roi-container"
-        aria-label="乐谱区域框选，拖动绘制，Esc 取消"
+        aria-label="乐谱区域框选，拖动绘制，退出键取消"
         tabIndex={0}
         style={{ width: displayWidth, aspectRatio: `${videoWidth} / ${videoHeight}` }}
         onPointerDown={handlePointerDown}
@@ -181,9 +181,17 @@ export default function ROISelector({
         onPointerUp={handlePointerUp}
         onPointerCancel={(event) => { if (dragRef.current?.pointerId === event.pointerId) clearDrag() }}
         onLostPointerCapture={() => { if (dragRef.current) clearDrag() }}
-        onKeyDown={(event) => { if (event.key === 'Escape') clearDrag() }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') clearDrag()
+          if (roi && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) {
+            event.preventDefault()
+            const step=event.shiftKey?10:1
+            commit(constrain({...roi,x:roi.x+(event.key==='ArrowRight'?step:event.key==='ArrowLeft'?-step:0),
+              y:roi.y+(event.key==='ArrowDown'?step:event.key==='ArrowUp'?-step:0)}))
+          }
+        }}
       >
-        <img src={imageUrl} alt="ROI 选区预览" draggable={false} />
+        <img src={imageUrl} alt="谱面选区预览" draggable={false} />
         {selection && (
           <div className="roi-box" style={{
             left: `${selection.x / videoWidth * 100}%`,
@@ -198,8 +206,8 @@ export default function ROISelector({
         <form className="roi-editor" onSubmit={handleApply} noValidate>
           <div className="roi-fields">
             {fields.map(({ key, label }) => (
-              <label key={key}>
-                {label}
+              <label key={key} className="floating-field">
+                <span className="field-label">{label}</span>
                 <input type="number" step="1" min={key === 'x' || key === 'y' ? 0 : 1}
                   max={key === 'x' ? videoWidth - 1 : key === 'y' ? videoHeight - 1 : key === 'width' ? videoWidth : videoHeight}
                   value={draft[key]} disabled={preview !== null}
