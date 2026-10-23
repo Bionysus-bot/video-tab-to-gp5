@@ -1,0 +1,173 @@
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import guitarpro
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from app.models.score import Score, TabMeasure, TabBeat, TabNote, RecognitionResult, TabFragment
+from app.models.conversion import ConversionRequest
+from app.services.revision_store import RevisionStore, read, write
+from app.services import conversion_pipeline as pipeline, project_guard
+from app.services.draft_artifact import export_partial
+from app.api.conversion_routes import router
+from app.storage import manager as storage
+
+
+def sample():
+    return Score(measures=[TabMeasure(number=1,source='row_0001.png',confidence=.2,
+        beats=[TabBeat(duration=4,notes=[TabNote(string=4,fret=10)],unresolved=['pitch'])])])
+
+
+class WorkspaceTests(unittest.TestCase):
+    def test_legacy_import_idempotent_and_manual_edit_conflict(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory=Path(folder);write(directory/'score.json',sample().model_dump())
+            before=(directory/'score.json').read_bytes();store=RevisionStore(directory)
+            store.import_legacy();store.import_legacy()
+            self.assertEqual(len(store.list()),1)
+            old=store.get(store.state()['active_revision'])
+            self.assertEqual(old['protected'],[old['entities'][0]['id']])
+            score=Score.model_validate(old['score']);score.measures[0].beats[0].notes[0].fret=12
+            new=store.save_edit(old['id'],score,old['id'])
+            self.assertEqual(new['entities'],old['entities'])
+            with self.assertRaises(ValueError):store.save_edit(old['id'],score,old['id'])
+            self.assertEqual((directory/'score.json').read_bytes(),before)
+            self.assertEqual(store.get(old['id'])['score']['measures'][0]['beats'][0]['notes'][0]['fret'],10)
+
+    def test_draft_preserves_known_notes_in_wrong_meter_without_source_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            score=sample();before=score.model_dump();path=Path(folder)/'draft.gp5'
+            report=export_partial(score,path)
+            self.assertEqual(score.model_dump(),before)
+            parsed=guitarpro.parse(str(path));measure=parsed.tracks[0].measures[0]
+            self.assertEqual(measure.voices[0].beats[0].notes[0].value,10)
+            self.assertIn('PARTIAL',measure.header.marker.title)
+            self.assertEqual(len(report['partial_bars']),1)
+            self.assertEqual(report['placeholders'],[])
+
+    def test_unknown_whole_bar_stays_explicit_placeholder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            score=sample();score.measures[0].number=2
+            report=export_partial(score,Path(folder)/'draft.gp5')
+            self.assertEqual(report['placeholders'][0]['number'],1)
+
+    def test_publishing_does_not_overwrite_concurrent_manual_revision(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=RevisionStore(folder);base=store.create(sample(),origin='local-read',activate=True,input_id='input')
+            edited=sample();edited.measures[0].beats[0].notes[0].fret=11
+            manual=store.save_edit(base['id'],edited,base['id'])
+            job=dict(base_revision=base['id'],revision=None,input_key='input')
+            machine=pipeline.publish(store,job,sample(),{'rows':[]},'local-read')
+            self.assertEqual(store.state()['active_revision'],manual['id'])
+            self.assertNotEqual(machine['id'],manual['id'])
+
+    def test_pipeline_uses_independent_rows_and_downloads_despite_low_score(self):
+        with tempfile.TemporaryDirectory() as folder,patch.object(storage,'STORAGE_ROOT',Path(folder)):
+            pid=storage.create_project();directory=storage.output_path(pid,'score');directory.mkdir()
+            manifest=dict(rows=[dict(id='row_0001.png',layout='tab',source='test',strings=4)],rejected=[])
+            write(directory/'manifest.json',manifest);(directory/'rows').mkdir();(directory/'rows/row_0001.png').write_bytes(b'fixture')
+            store=RevisionStore(directory)
+            config=ConversionRequest(source='existing',layout='tab',recover=False)
+            jobs=[]
+            def capture_start(thread):jobs.append(thread)
+            with patch('threading.Thread.start',capture_start),patch('app.services.recognition_cache.reader_signature',return_value='test'):
+                job=pipeline.start(store,config,pid)
+                with patch('app.services.recognition_cache.cache_key',return_value=None),patch.object(pipeline,'ReaderSession') as reader:
+                    fragment=sample().measures[0].model_copy(deep=True);fragment.number=2
+                    reader.return_value.call.return_value=RecognitionResult(measures=sample().measures,
+                        fragments=[TabFragment(side='right',bounds=[100,200],measure=fragment)])
+                    pipeline.run(store,pid,job,threading.Event())
+            result=pipeline.get_job(store,job['id'])
+            self.assertEqual(result['status'],'completed',result['message'])
+            self.assertTrue(result['artifact'])
+            revision=store.get(result['revision'])
+            self.assertEqual(len(revision['score']['measures']),2)
+            self.assertIn('duration',revision['score']['measures'][1]['beats'][0]['unresolved'])
+            self.assertTrue(revision['manifest']['fragments'])
+            self.assertFalse((directory/'score.json').exists())
+            app=FastAPI();app.include_router(router,prefix='/api');client=TestClient(app)
+            response=client.get(f'/api/projects/{pid}/artifacts/{result["artifact"]["id"]}/download')
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(client.get(f'/api/projects/{pid}/artifacts/not-an-id/download').status_code,409)
+
+    def test_restart_marks_interrupted_and_shared_lock_blocks_legacy(self):
+        from app.api.score_routes import acquire,release
+        with tempfile.TemporaryDirectory() as folder:
+            store=RevisionStore(folder);identifier='a'*32
+            write(pipeline.job_path(store,identifier),dict(id=identifier,status='running'))
+            self.assertEqual(pipeline.get_job(store,identifier)['status'],'interrupted')
+        self.assertTrue(project_guard.acquire('test-project','conversion'))
+        try:
+            with self.assertRaises(Exception):acquire('test-project')
+        finally:release('test-project')
+
+    def test_cancelled_process_stops_and_no_publish(self):
+        event=threading.Event();event.set()
+        with self.assertRaises(pipeline.Cancelled):
+            pipeline.bounded('time','sleep',(10,),cancel=event,timeout=1)
+
+    def test_reader_session_reuses_process_and_can_be_cancelled(self):
+        session=pipeline.ReaderSession();event=threading.Event()
+        try:
+            first=session.call('os','getpid',(),cancel=event)
+            second=session.call('os','getpid',(),cancel=event)
+            self.assertEqual(first,second)
+            event.set()
+            with self.assertRaises(pipeline.Cancelled):session.call('time','sleep',(10,),cancel=event)
+        finally:session.close()
+        self.assertFalse(session.process.is_alive())
+
+    def test_bad_version_id_cannot_escape_storage(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ValueError):RevisionStore(folder).get('../score.json')
+
+    def test_resume_after_own_published_revision_and_no_duplicate_job(self):
+        with tempfile.TemporaryDirectory() as folder,patch.object(storage,'STORAGE_ROOT',Path(folder)):
+            pid=storage.create_project();store=RevisionStore(storage.output_path(pid,'score'))
+            write(store.directory/'manifest.json',dict(rows=[dict(id='r.png',layout='tab')]))
+            (store.directory/'rows').mkdir();(store.directory/'rows/r.png').write_bytes(b'fixture')
+            config=ConversionRequest(source='existing',layout='tab')
+            with patch('threading.Thread.start'):
+                first=pipeline.start(store,config,pid)
+                duplicate=pipeline.start(store,config,pid)
+                self.assertEqual(first['id'],duplicate['id'])
+                revision=store.create(sample(),origin='local-read',activate=True)
+                first.update(status='cancelled',revision=revision['id'])
+                write(pipeline.job_path(store,first['id']),first)
+                pipeline._live.pop(first['id'],None);project_guard.release(pid)
+                resumed=pipeline.start(store,config,pid,resume=first['id'])
+                self.assertEqual(resumed['activation_expected'],revision['id'])
+                pipeline._live.pop(resumed['id'],None);project_guard.release(pid)
+
+    def test_new_source_does_not_activate_over_protected_legacy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=RevisionStore(folder);write(store.directory/'score.json',sample().model_dump())
+            store.import_legacy();active=store.state()['active_revision']
+            job=dict(base_revision=active,revision=None,input_key='new-source')
+            pipeline.publish(store,job,sample(),dict(rows=[]),'local-read')
+            self.assertEqual(store.state()['active_revision'],active)
+
+    def test_invalid_roi_and_tuning_rejected(self):
+        for fields in [dict(roi=dict(x=-1,y=0,width=10,height=10)),dict(tuning=[28,33,38,43])]:
+            with self.assertRaises(ValueError):ConversionRequest(source='video',layout='tab',**fields)
+
+    def test_video_rows_use_independent_anchors_and_keep_both_sources(self):
+        from app.services.score_continuity import stitch_rows
+        import numpy as np
+        rows=[dict(id='a.png',layout='standard-tab'),dict(id='b.png',layout='standard-tab')]
+        seen=[]
+        def numbers(image,row):
+            seen.append(row.get('number_floor'))
+            return [1,2,3],[1,2,3]
+        with patch('app.services.score_continuity.imread',return_value=np.zeros((10,10,3),dtype=np.uint8)), \
+             patch('app.services.score_continuity.number_sequence',side_effect=numbers), \
+             patch('app.services.score_continuity.join_fragments',return_value=(None,'重复覆盖，不拼接')):
+            stitch_rows(Path('.'),rows,independent_anchors=True)
+        self.assertEqual(seen,[None,None])
+        self.assertEqual(rows[1]['measure_numbers'],[1,2,3])
+
+
+if __name__=='__main__':unittest.main()

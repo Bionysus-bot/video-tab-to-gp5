@@ -151,6 +151,8 @@ def prepare_images(inputs: list[Path], output: Path, layout: str = 'auto') -> di
             name = f"row_{len(rows) + 1:04d}.png"
             imwrite(str(output / name), crop)
             metadata = dict(id=name, source=source, source_row=index + 1, strings=len(group), layout='tab',
+                             source_bounds=[0,y0,image.shape[1],y1-y0],
+                             source_size=[image.shape[1],image.shape[0]],
                              lines=[y - y0 for y in group],
                              bars=bar_positions(crop, [y - y0 for y in group]),
                              width=crop.shape[1], height=crop.shape[0])

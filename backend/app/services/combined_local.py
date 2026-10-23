@@ -436,10 +436,14 @@ def read_combined_local(path, row, tuning, diagnostics=None):
     if not result.measures:
         raise UnsupportedTabImage('联合谱没有可读的完整小节')
     corroborate_pitches(row_events,staff[0]/factor,spacing/factor,tuning)
+    from app.services.notation_graph import link_row_ties
+    link_row_ties(result.measures,row_events,cv2.cvtColor(original,cv2.COLOR_BGR2GRAY),spacing/factor)
     if diagnostics is not None:
         for entry in diagnostics['events']:
             event=next((e for e in row_events if e['measure']==entry['measure'] and e['beat_index']==entry['beat_index']),None)
             if event and event.get('pitch_evidence'):
                 entry.update(unresolved=event['beat'].unresolved,notes=[n.model_dump() for n in event['beat'].notes],
                              pitch_evidence=event['pitch_evidence'])
+            if event and event.get('tie_evidence'):
+                entry.update(notes=[n.model_dump() for n in event['beat'].notes],tie_evidence=event['tie_evidence'])
     return result

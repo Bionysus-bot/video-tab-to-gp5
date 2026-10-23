@@ -24,6 +24,7 @@ from app.services.pdf_exporter import export_pdf, export_pdf_grid
 from app.services.roi_cropper import batch_crop
 from app.services.video_service import get_video_info
 from app.storage import manager as storage
+from app.services import project_guard
 
 
 router = APIRouter()
@@ -69,6 +70,8 @@ def get_project(project_id: str):
 
 @router.delete("/projects/{project_id}")
 def delete_project(project_id: str):
+    if project_guard.busy(project_id):
+        raise HTTPException(409, '请先停止项目任务')
     if not storage.delete_project(project_id):
         raise HTTPException(404, "Project not found")
     return {"status": "deleted"}
@@ -78,11 +81,14 @@ def delete_project(project_id: str):
 
 @router.post("/projects/{project_id}/upload")
 async def upload_video(project_id: str, file: UploadFile = File(...)):
+    if project_guard.busy(project_id):
+        raise HTTPException(409, '请先停止项目任务')
     config = storage.read_config(project_id)
     if config is None:
         raise HTTPException(404, "Project not found")
 
-    dest = storage.source_store_path(project_id, file.filename or "video.mp4")
+    import uuid
+    dest = storage.source_store_path(project_id, uuid.uuid4().hex + Path(file.filename or 'video.mp4').suffix)
     content = await file.read()
     with open(dest, "wb") as f:
         f.write(content)
@@ -181,7 +187,7 @@ def start_processing(project_id: str):
         raise HTTPException(400, "ROI not set")
     if not config.source_video or not Path(config.source_video).exists():
         raise HTTPException(400, "No video uploaded")
-    if project_id in _processing_lock:
+    if project_id in _processing_lock or not project_guard.acquire(project_id, 'video'):
         raise HTTPException(409, "Processing already in progress")
 
     _processing_lock.add(project_id)
@@ -212,6 +218,7 @@ def _run_pipeline_wrapper(project_id: str, config: ProjectConfig) -> None:
         _tasks[project_id].output_files = []
     finally:
         _processing_lock.discard(project_id)
+        project_guard.release(project_id)
 
 def _run_pipeline(project_id: str, config: ProjectConfig) -> None:
     task = _tasks[project_id]

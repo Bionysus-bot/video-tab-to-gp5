@@ -63,15 +63,18 @@ def read_json(path: Path, default=None):
 
 
 def acquire(project_id):
+    from app.services import project_guard
     with _guard:
-        if project_id in _busy:
+        if project_id in _busy or not project_guard.acquire(project_id):
             raise HTTPException(409, "识谱任务进行中，请等待完成")
         _busy.add(project_id)
 
 
 def release(project_id):
+    from app.services import project_guard
     with _guard:
         _busy.discard(project_id)
+        project_guard.release(project_id)
 
 
 @router.get("/score/models")

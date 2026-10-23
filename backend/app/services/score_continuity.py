@@ -57,16 +57,21 @@ def join_fragments(left_image, left_row, right_image, right_row):
                 'measure_numbers': ln+[ln[-1]+1],
                 'join_seams': left_row.get('join_seams',[])+[end],
                 'joined_from': [left_row['id'],right_row['id']]}
+    metadata['source_parts'] = [
+        dict(source=left_row.get('source'), bounds=left_row.get('source_bounds'),
+             transform=[1,0,0], visible_x=[0,end]),
+        dict(source=right_row.get('source'), bounds=right_row.get('source_bounds'),
+             transform=[ratio,end-begin*ratio,shift], visible_x=[begin,edge+2])]
     return (joined,metadata), ''
 
 
-def stitch_rows(directory: Path, rows: list[dict]):
+def stitch_rows(directory: Path, rows: list[dict], *, independent_anchors=False):
     warnings = []
     originals = {r['id']: imread(directory/r['id']) for r in rows if r.get('layout') == 'standard-tab'}
     floor = None
     for row in rows:
         if row['id'] in originals:
-            if floor is not None:
+            if floor is not None and not independent_anchors:
                 row['number_floor'] = floor
             numbers, anchors = number_sequence(originals[row['id']],row)
             row.update(measure_numbers=numbers,number_anchors=anchors)

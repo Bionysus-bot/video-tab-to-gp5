@@ -3,6 +3,54 @@ import cv2
 import numpy as np
 
 
+def visible_tie_curve(gray, first, second, spacing):
+    """Require a curved ink component between two level, independently found heads."""
+    x1,y1=first;x2,y2=second
+    if x2-x1<spacing*2 or abs(y2-y1)>spacing*.35:return False
+    left=max(0,round(x1+spacing*.45));right=min(gray.shape[1],round(x2-spacing*.45))
+    top=max(0,round(y1-spacing*2));bottom=min(gray.shape[0],round(y1+spacing*2))
+    ink=(gray[top:bottom,left:right]<160).astype(np.uint8)
+    if ink.size==0:return False
+    lines=cv2.morphologyEx(ink,cv2.MORPH_OPEN,np.ones((1,max(8,round(spacing*3))),np.uint8))
+    stems=cv2.morphologyEx(ink,cv2.MORPH_OPEN,np.ones((max(8,round(spacing*1.5)),1),np.uint8))
+    ink=ink & (1-lines) & (1-stems)
+    count,components,stats,_=cv2.connectedComponentsWithStats(ink)
+    for label in range(1,count):
+        x,y,w,h,area=stats[label]
+        if w<(right-left)*.55 or not spacing*.12<h<spacing*1.4 or area/w>spacing*.4:continue
+        ys,xs=np.where(components==label)
+        unique=np.unique(xs)
+        if len(unique)<w*.65:continue
+        medians=np.array([np.median(ys[xs==px]) for px in unique])
+        t=(unique-unique.min())/max(1,np.ptp(unique))
+        coefficients=np.polyfit(t,medians,2)
+        fit=np.polyval(coefficients,t)
+        ends=np.polyval(coefficients,[0,1]);middle=np.polyval(coefficients,.5)
+        sag=middle-float(np.mean(ends))
+        absolute=medians+top
+        above=np.max(absolute)<y1-spacing*.15
+        below=np.min(absolute)>y1+spacing*.15
+        if abs(ends[1]-ends[0])<spacing*.35 and spacing*.12<abs(sag)<spacing and np.sqrt(np.mean((medians-fit)**2))<spacing*.15 and ((below and sag>0) or (above and sag<0)):
+            return True
+    return False
+
+
+def link_row_ties(measures,events,gray,spacing):
+    traces={id(e['beat']):e for e in events}
+    previous=None;last_number=None
+    for measure in measures:
+        if last_number is not None and measure.number!=last_number+1:previous=None
+        for beat in measure.beats:
+            event=traces.get(id(beat))
+            signature=sorted((n.string,n.fret) for n in beat.notes if n.kind!='dead')
+            if previous and signature and signature==previous[0] and not beat.unresolved and event and event.get('head_detected') and visible_tie_curve(gray,previous[1],event['head'],spacing):
+                for note in beat.notes:
+                    if note.kind=='normal':note.kind='tie'
+                event['tie_evidence']='visible_curve'
+            previous=(signature,event['head']) if signature and event and event.get('head_detected') and not beat.unresolved else None
+        last_number=measure.number
+
+
 def attach_heads(gray, stems, staff, left, right, spacing, tab_centers=(), seams=()):
     top=max(0,round(staff[0]-spacing*3));bottom=min(gray.shape[0],round(staff[-1]+spacing*3))
     ink=(gray[top:bottom,left:right]<145).astype(np.uint8)
@@ -157,6 +205,21 @@ def refine_fret_crops(figures,image,spacing,heads,read_text):
                      text=readings[0][0],confidence=float(min(v[1] for v in readings)),alternative=readings[1][0])
             removed.add(j)
     figures=[c for i,c in enumerate(figures) if i not in removed]
+    # A merged two-digit glyph can be confidently read as its right-hand zero.
+    # Revisit wide single digits, but only at one independently detected onset.
+    for c in figures:
+        if c['parenthesized'] or not c['text'].isdigit() or len(c['text'])!=1 or c['w']<c['h']*.9:
+            continue
+        left,right=c['x'],c['x']+c['w']
+        onsets=[e for e in heads if left-spacing*.3<e['head'][0]<right+spacing*.3]
+        if len(onsets)!=1:continue
+        x,y,w,h=(c[k] for k in ('x','y','w','h'))
+        crop=image[max(0,y-3):y+h+3,max(0,x-2):x+w+2]
+        gray=cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY)
+        variants=[crop,cv2.cvtColor(np.where(gray<180,0,255).astype(np.uint8),cv2.COLOR_GRAY2BGR)]
+        readings=read_text([cv2.copyMakeBorder(v,8,8,8,8,cv2.BORDER_CONSTANT,value=(255,255,255)) for v in variants])
+        if len(readings)==2 and readings[0][0]==readings[1][0] and len(readings[0][0])==2 and readings[0][0].isdigit() and int(readings[0][0])<=36 and min(v[1] for v in readings)>.85:
+            c.update(text=readings[0][0],confidence=float(min(v[1] for v in readings)),alternative=readings[1][0])
     weak=[c for c in figures if not c['text'] or c['confidence']<.35]
     variants=[]
     for c in weak:
