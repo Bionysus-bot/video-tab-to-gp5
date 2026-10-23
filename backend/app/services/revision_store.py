@@ -152,23 +152,28 @@ class RevisionStore:
 
     def import_legacy(self):
         with LOCK:
-            if self.state()['active_revision']:
-                return
-            legacy = read(self.directory / 'score.json')
-            if not legacy or not legacy.get('measures'):
-                return
-            score = Score.model_validate(legacy)
-            revision = self.create(score, origin='legacy-import',
-                manifest=read(self.directory / 'manifest.json', {'rows': []}), activate=True)
-            # A legacy save contains no field-level provenance. Protect every measure.
-            revision['protected'] = [m['id'] for m in revision['entities']]
-            write(self.root / 'revisions' / revision['id'] / 'revision.json', revision)
+            if not self.state()['active_revision']:
+                legacy = read(self.directory / 'score.json')
+                if legacy and legacy.get('measures'):
+                    score = Score.model_validate(legacy)
+                    revision = self.create(score, origin='legacy-import',
+                        manifest=read(self.directory / 'manifest.json', {'rows': []}), activate=True)
+                    # Old saves have no field-level provenance: protect all measures.
+                    revision['protected'] = [m['id'] for m in revision['entities']]
+                    write(self.root / 'revisions' / revision['id'] / 'revision.json', revision)
+            seen=set(self.state().get('imported_recoveries',[]))
             for path in (self.directory/'video-recovery').glob('*/recognized-score.json'):
+                key=str(path.relative_to(self.directory))
+                if key in seen:continue
                 recovered=Score.model_validate(read(path))
                 imported=self.create(recovered,origin='video-recovery-import',
-                    manifest=read(self.directory/'manifest.json',{'rows':[]}))
+                    manifest=read(self.directory/'manifest.json',{'rows':[]}),
+                    activate=not self.state()['active_revision'])
                 imported['protected']=[m['id'] for m in imported['entities']]
                 write(self.root/'revisions'/imported['id']/'revision.json',imported)
+                seen.add(key)
+            if sorted(seen)!=self.state().get('imported_recoveries',[]):
+                self.update(imported_recoveries=sorted(seen))
 
     def save_edit(self, revision_id, score, expected):
         with LOCK:

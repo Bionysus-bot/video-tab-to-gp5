@@ -150,6 +150,15 @@ class WorkspaceTests(unittest.TestCase):
             pipeline.publish(store,job,sample(),dict(rows=[]),'local-read')
             self.assertEqual(store.state()['active_revision'],active)
 
+    def test_old_video_recovery_is_imported_once_without_changing_active_edit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=RevisionStore(folder);write(store.directory/'score.json',sample().model_dump())
+            store.import_legacy();active=store.state()['active_revision']
+            write(store.directory/'video-recovery'/'test'/'recognized-score.json',sample().model_dump())
+            store.import_legacy();store.import_legacy()
+            self.assertEqual(len(store.list()),2)
+            self.assertEqual(store.state()['active_revision'],active)
+
     def test_invalid_roi_and_tuning_rejected(self):
         for fields in [dict(roi=dict(x=-1,y=0,width=10,height=10)),dict(tuning=[28,33,38,43])]:
             with self.assertRaises(ValueError):ConversionRequest(source='video',layout='tab',**fields)
