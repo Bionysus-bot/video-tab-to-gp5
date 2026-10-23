@@ -175,12 +175,14 @@ export default function Workspace() {
 
         {/* Right: parameters + progress + results */}
         <section className="workspace-right">
+          <details className="sidebar-fold"><summary>视频处理与 PDF 设置</summary>
           <ParameterPanel
             processing={processing}
             pdf={pdf}
             onProcessingChange={handleProcessingChange}
             onPDFChange={handlePDFChange}
           />
+          </details>
           <div className="action-bar">
             <button className="btn btn-primary" onClick={handleStart} disabled={running || !projectId}>
               {running ? '处理中...' : '开始处理'}

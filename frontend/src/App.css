@@ -428,3 +428,14 @@
 .score-beat { padding: 10px 0; border-bottom: 1px solid #ddd; }
 .score-measure input[type="number"] { width: 65px; }
 .score-measure label { display: inline-block; margin: 6px; }
+
+/* Compact sidebar: keep primary actions visible, disclose detail on demand. */
+.sidebar-fold > summary, .score-fold > summary { cursor: pointer; color: var(--text); font-size: 14px; line-height: 1.6; padding: 8px 0; }
+.sidebar-fold, .score-panel .score-fold { border-top: 1px solid var(--border); margin: 10px 0; }
+.score-panel .score-fold[open] { padding-bottom: 10px; }
+.score-panel .score-fold p { font-size: 13px; color: var(--text-muted, var(--text)); }
+.score-panel .btn { font-size: 14px; padding: 9px 12px; margin: 3px 2px 3px 0; white-space: normal; }
+.score-panel .score-export-more { width: 100%; }
+.score-panel .score-measure { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.score-panel .score-measure > summary { font-size: 14px; }
+.score-panel .score-beat { border-bottom-color: var(--border); }
