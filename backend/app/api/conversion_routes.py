@@ -102,6 +102,17 @@ def get_revision(project:str,revision_id:str):
     return safe(lambda:repository(project).get(revision_id))
 
 
+@router.get('/projects/{project}/revisions')
+def list_revisions(project:str):
+    return [summary(r) for r in repository(project).list()]
+
+
+@router.get('/projects/{project}/revisions/{revision_id}/issues')
+def list_issues(project:str,revision_id:str,kind:str|None=None):
+    revision=safe(lambda:repository(project).get(revision_id))
+    return [i for i in revision['issues'] if kind is None or i['kind']==kind]
+
+
 @router.post('/projects/{project}/revisions/{revision_id}/edits')
 def edit(project:str,revision_id:str,change:ScoreEdit):
     return safe(lambda:repository(project).save_edit(revision_id,change.score,change.expected_revision))
@@ -166,6 +177,11 @@ def artifact_dir(project,artifact_id):
     directory=safe(lambda:store.root/'artifacts'/checked_id(artifact_id))
     if not (directory/'manifest.json').exists():raise HTTPException(404,'草稿尚未生成')
     return directory
+
+
+@router.get('/projects/{project}/artifacts/{artifact_id}')
+def get_artifact(project:str,artifact_id:str):
+    return read(artifact_dir(project,artifact_id)/'manifest.json')
 
 
 @router.get('/projects/{project}/artifacts/{artifact_id}/download')
