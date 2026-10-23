@@ -100,7 +100,7 @@ def issues_for(score, mapping):
                 if note.kind == 'tie' and last.get(note.string) != note.fret:
                     add('tie_or_technique', '延音与前一拍同弦同品未对应。', mi, bi)
             last = {n.string: n.fret for n in beat.notes}
-        for text in dict.fromkeys(measure.issues):
+        for text in (() if measure.reviewed else dict.fromkeys(measure.issues)):
             if text.startswith(('拍号暂按', '已由视觉模型复读并通过', '原视频完整画面复读')):
                 continue
             kind='number_conflict' if '编号' in text else 'fragment_gap' if any(s in text for s in ('边界', '片段', '缺失', '截断')) else 'tie_or_technique'
@@ -194,6 +194,28 @@ class RevisionStore:
                                    protected=sorted(protected), activate=True)
             write(self.root / 'revisions' / revision['id'] / 'patches.json', patches)
             return revision
+
+    def confirm_measure(self, revision_id, measure_id, score, expected):
+        """Human acceptance clears machine doubts, never structural errors."""
+        from app.services.score_exporter import validate_score
+        with LOCK:
+            old=self.get(revision_id)
+            index=next((i for i,m in enumerate(old['entities']) if m['id']==measure_id),None)
+            if index is None:raise ValueError('小节不属于当前版本，请重新选择。')
+            if len(score.measures)!=len(old['score']['measures']):
+                raise ValueError('小节结构已改变，请重新加载。')
+            candidate=score.model_copy(deep=True)
+            measure=candidate.measures[index]
+            for bi,beat in enumerate(measure.beats,1):
+                if 'pitch' in beat.unresolved and not beat.notes:
+                    raise ValueError(f'第 {bi} 拍位缺少音符，请补全音符或明确设为休止后再确认。')
+                beat.unresolved=[]
+            measure.reviewed=True
+            errors=[i['message'] for i in validate_score(candidate,require_review=False)
+                    if i['severity']=='error' and i['measure']==measure.number]
+            if errors:
+                raise ValueError('此小节暂不能确认：'+'；'.join(dict.fromkeys(errors)))
+            return self.save_edit(revision_id,candidate,expected)
 
     def activate(self, revision_id, expected):
         with LOCK:

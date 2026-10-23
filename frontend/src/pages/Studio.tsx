@@ -238,6 +238,20 @@ export default function Studio() {
         });
     }
     async function selectVersion(id: string) { await perform(async () => { const latest = await call<WorkspaceData>(root + '/workspace'); await call(root + `/revisions/${id}/activate`, { expected_revision: latest.state.active_revision }); await refresh(project); setView('results'); }); }
+    async function confirmSelected() {
+        if (!draft || !revision) return;
+        const index=selected, pid=project;
+        await perform(async()=>{
+            const value=await call<Revision>(root+`/revisions/${revision.id}/measures/${revision.entities[index].id}/confirm`,{
+                expected_revision:revision.id,score:draft
+            });
+            if (current.current!==pid) return;
+            applyRevision(value);setSelected(index);
+            await call(root+`/revisions/${value.id}/artifacts`,{});
+            await refresh(pid,false);
+            setMessage(`第 ${value.score.measures[index].number} 小节已确认，已更新草稿并去掉该小节的核对文字。其他未确认小节保留标注。`);
+        });
+    }
     async function save() {
         if (!draft || !revision)
             return false;
@@ -338,7 +352,7 @@ export default function Studio() {
                             }>(root + `/revisions/${revision.id}/rows/${row.id}/analysis`, {});
                             setOverlay({ revision: revision.id, source: measure.source, url: result.url });
                             setMessage('关联图是重新读取的候选，不会覆盖已保存乐谱。绿框为关联结果，橙框为弱读数，红框为未确定位置。');
-                        })}>{overlay?.revision === revision.id && overlay.source === measure.source ? '返回原图' : '查看音符关联图'}</button>}</div><MeasureEditor key={`${revision.id}-${selected}`} measure={measure} onChange={value => { const next = structuredClone(draft); next.measures[selected] = value; setDraft(next); setDirty(true); }}/></>}
+                        })}>{overlay?.revision === revision.id && overlay.source === measure.source ? '返回原图' : '查看音符关联图'}</button>}</div><fieldset className="editor-fields" disabled={busy}><MeasureEditor key={`${revision.id}-${selected}`} measure={measure} onChange={value => { const next = structuredClone(draft); value.reviewed=false; next.measures[selected] = value; setDraft(next); setDirty(true); }}/></fieldset><div className="measure-confirmation"><div><span>{measure.reviewed ? '此小节已人工确认' : '核对完成后，确认当前小节'}</span><p>{measure.reviewed ? '新草稿不再显示此小节的核对文字。再次修改会取消确认。' : '保存当前修改并生成新草稿，去掉此小节的核对文字；其他小节保留标注。'}</p></div><button className="button secondary" disabled={busy || measure.reviewed} onClick={()=>void confirmSelected()}>{busy ? '正在保存…' : measure.reviewed ? '已确认' : '保存并确认此小节'}</button></div></>}
    </section></div></> : <div className="empty-result"><Mark /><h2>乐谱尚未生成</h2><button className="button secondary" onClick={() => setView(running ? 'convert' : 'prepare')}>{running ? '查看识谱进度' : '导入并准备素材'}</button></div>}
    </>}
  </main>

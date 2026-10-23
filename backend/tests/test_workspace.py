@@ -22,6 +22,56 @@ def sample():
 
 
 class WorkspaceTests(unittest.TestCase):
+    def test_confirmation_removes_only_selected_bar_markers_in_real_gp5(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=RevisionStore(folder);score=sample()
+            score.measures[0].beats[0].duration=1
+            score.measures[0].issues=['边缘片段候选：待核对']
+            second=score.measures[0].model_copy(deep=True);second.number=2
+            score.measures.append(second)
+            old=store.create(score,origin='local-read',activate=True)
+            before=old['score']
+            confirmed=store.confirm_measure(old['id'],old['entities'][0]['id'],score,old['id'])
+            self.assertTrue(confirmed['score']['measures'][0]['reviewed'])
+            self.assertFalse(confirmed['score']['measures'][1]['reviewed'])
+            self.assertEqual(store.get(old['id'])['score'],before)
+            self.assertFalse([i for i in confirmed['issues'] if i['measure_index']==0])
+            self.assertTrue([i for i in confirmed['issues'] if i['measure_index']==1])
+            path=Path(folder)/'confirmed.gp5'
+            report=export_partial(Score.model_validate(confirmed['score']),path)
+            song=guitarpro.parse(str(path))
+            self.assertIsNone(song.measureHeaders[0].marker)
+            self.assertFalse(song.tracks[0].measures[0].voices[0].beats[0].text)
+            self.assertIsNotNone(song.measureHeaders[1].marker)
+            self.assertIn('CHECK',song.tracks[0].measures[1].voices[0].beats[0].text)
+            self.assertEqual([i['number'] for i in report['uncertain']],[2])
+            self.assertEqual(song.tracks[0].measures[0].voices[0].beats[0].notes[0].value,10)
+
+    def test_confirmation_refuses_wrong_meter_and_unknown_missing_note(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=RevisionStore(folder);score=sample();old=store.create(score,origin='local-read',activate=True)
+            with self.assertRaisesRegex(ValueError,'时值不完整'):
+                store.confirm_measure(old['id'],old['entities'][0]['id'],score,old['id'])
+            score.measures[0].beats[0].duration=1;score.measures[0].beats[0].notes=[]
+            with self.assertRaisesRegex(ValueError,'缺少音符'):
+                store.confirm_measure(old['id'],old['entities'][0]['id'],score,old['id'])
+            self.assertEqual(store.state()['active_revision'],old['id'])
+
+    def test_confirmation_api_saves_pending_corrections_and_rejects_stale_request(self):
+        with tempfile.TemporaryDirectory() as folder,patch.object(storage,'STORAGE_ROOT',Path(folder)):
+            pid=storage.create_project();store=RevisionStore(storage.output_path(pid,'score'))
+            score=sample();old=store.create(score,origin='local-read',activate=True)
+            score.measures[0].beats[0].duration=1;score.measures[0].beats[0].notes[0].fret=12
+            app=FastAPI();app.include_router(router,prefix='/api');client=TestClient(app)
+            url=f'/api/projects/{pid}/revisions/{old["id"]}/measures/{old["entities"][0]["id"]}/confirm'
+            body=dict(expected_revision=old['id'],score=score.model_dump())
+            response=client.post(url,json=body);self.assertEqual(response.status_code,200,response.text)
+            value=response.json()
+            self.assertEqual(value['score']['measures'][0]['beats'][0]['notes'][0]['fret'],12)
+            self.assertTrue(value['score']['measures'][0]['reviewed'])
+            self.assertIn(value['entities'][0]['id'],value['protected'])
+            self.assertEqual(client.post(url,json=body).status_code,409)
+
     def test_legacy_import_idempotent_and_manual_edit_conflict(self):
         with tempfile.TemporaryDirectory() as folder:
             directory=Path(folder);write(directory/'score.json',sample().model_dump())

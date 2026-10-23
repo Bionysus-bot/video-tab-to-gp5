@@ -297,3 +297,8 @@
 .studio .drawer-body > .floating-field { padding-top: 24px; gap: 0; }
 .studio .roi-fields .floating-field { padding-top: 24px; gap: 0; }
 @media (prefers-reduced-motion: reduce) { .studio .floating-field .field-label { transition: none; transform: none; } }
+.measure-confirmation { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 28px 32px; border-top: .5px solid var(--border); }
+.measure-confirmation span { font-size: 14px; font-weight: 300; }
+.measure-confirmation p { margin-top: 12px; color: var(--text-muted); font-size: 12px; max-width: 65ch; }
+@media(max-width:959px) { .measure-confirmation { flex-direction: column; align-items: flex-start; } }
+.editor-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
