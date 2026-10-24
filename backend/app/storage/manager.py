@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 import shutil
 import time
@@ -10,7 +11,7 @@ from typing import Optional
 from app.models.schemas import ProjectConfig, ProjectInfo
 
 
-STORAGE_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "projects"
+STORAGE_ROOT = Path(os.environ["PUJIAN_DATA_DIR"]) / "storage" / "projects" if os.environ.get("PUJIAN_DATA_DIR") else Path(__file__).resolve().parent.parent.parent.parent / "storage" / "projects"
 
 
 def _project_dir(project_id: str) -> Path:
