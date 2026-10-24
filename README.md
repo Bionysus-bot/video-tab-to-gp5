@@ -1,238 +1,178 @@
-# Video TAB to GP5 · 视频曲谱转 Guitar Pro
+# 谱间 · Video TAB to GP5
 
-**当前开发分支的试用入口已更新为日系清新风工作区。** 分为“准备素材 / 自动识谱 / 结果校对”，支持自动生成草稿与独立结果版本；有疑点也可下载。原界面可通过 `/?legacy=1` 使用。两套界面的编辑数据独立，旧版工具不会同步修改新版本包。当前尚未作为正式版本发布，具体实现、验证及剩余限制见 [实施记录](docs/IMPLEMENTATION_STATUS.md)。
+将视频中的动态 TAB 或已有 PDF 转成可编辑的 Guitar Pro 5（`.gp5`）草稿。本机运行，当前重点支持 **四弦 / 五弦贝斯、纯 TAB / 五线谱＋TAB**，不做音频听写。
 
-新流程：导入视频或 PDF → 选择区域与谱面类型 → 开始自动识谱 → 下载草稿 → 按需查看疑点。Ollama 可选；纯 TAB 与五线谱＋TAB 保留各自读取器。重新导入素材会创建独立项目，原项目和外部人工修正的 GP5 保留。
+**当前试用版：`v0.3.0-preview.1`。** [下载发布包](https://github.com/Bionysus-bot/video-tab-to-gp5/releases/tag/v0.3.0-preview.1) · [版本记录](CHANGELOG.md) · [五弦说明](docs/FIVE_STRING_BASS.md)
 
-第三步校对完成后，点击小节编辑区下方的 **保存并确认此小节**，会保存修改并更新草稿：该小节的核对文字标注被去除，其他未确认小节仍保留标注。再次编辑会取消该小节的确认状态。拍数错误或尚未补全的音符需先修正；不必确认全部小节才能下载草稿。旧下载文件保留，需下载新版本查看清除后的标注。
+本版位于 `codex/five-string-bass`，主分支暂保留原版本。识谱结果需对照原图核对；可先下载带疑点标注的草稿，再逐步修正。通过程序检查不等于所有音符准确。
 
-已核对多处修改时，可点击第三步版本栏下方的 **批量确认待确认小节**。该操作保存当前修改，处理当前版本的所有未确认小节，不受疑点筛选影响；拍数、音符缺失或结构检查不通过的小节会跳过并保留标注，原因可展开查看。操作另存一个版本并更新下载草稿，已有版本保留。
+## 本版更新
 
-新版工作区已增加 **五弦贝斯**：在准备页或“设置 → 乐谱”选择乐器，提供低音 B 标准调弦、全降半音、全降全音及 Drop A，支持第 5 弦编辑与 GP5 输出。四弦仍为默认选项。[五弦使用说明与验证范围](docs/FIVE_STRING_BASS.md)。
+- **简洁工作区**：准备素材、自动识谱、结果校对分成三个视图；暖白浅蓝配色、中文像素字体和紧凑首屏。
+- **四弦 / 五弦贝斯**：四弦默认不变，五弦增加最低 B 弦、第五弦编辑和 GP5 输出。
+- **调弦方案直接选择**：显示音名，不要求填写 MIDI 数值。
+- **自动草稿与版本保留**：识谱结果独立保存，保留已知音符、缺失提示及旧版本；可下载有疑点的草稿。
+- **单小节 / 批量确认**：保存修改、生成新草稿，并去掉已确认小节的谱内核对文字。结构错误或音符缺失的小节会跳过并显示原因。
+- **本地优先与缓存**：复用 OCR 进程，支持任务取消及检查点继续；视觉模型作为可选局部复核。
 
-设计与开发依据：[PRD](docs/PRD.md)、[技术文档](docs/TECHNICAL_DESIGN.md)、[UI 文档](docs/UI_DESIGN.md)、[开发计划](docs/DEVELOPMENT_PLAN.md)。
-
-把视频里的动态 TAB 谱提取成 PDF，再把截图或已有 PDF 转成可编辑的 Guitar Pro 5（`.gp5`）文件。适用于吉他、贝斯的数字指法谱，提供本地识谱、人工校对和导出。
-
-**当前版本：`v0.2.0-preview.1`。** 右栏说明、设置和高级修复默认折叠；校对区按需打开，一次只显示选中的一个小节。识谱与下载功能保留，更新不会覆盖已保存的乐谱。
-
-**当前为联合谱试用分支 `codex/combined-tab-wip`，尚未合并主分支。** 保留原纯 TAB 读取器，新增独立的“五线谱＋TAB”本地读取、类型选择和保留校对的裁图更新。[两种谱面使用说明与限制](docs/COMBINED_TAB.md)。整曲联合谱仍有待修正项，不能视为完整转谱成功。此前的 [识谱加速试用和回退说明](docs/RECOGNITION_SPEED.md) 保留。
-
-**非商业使用：自 v0.1.1 起新授权的原创新增内容禁止用于商业用途，未经相应权利人书面许可，不得用于收费转谱、商业产品或变现服务。** 上游及已按 MIT 发布的内容保留原许可，本声明不追溯取消其既有权限。完整适用范围见 [LICENSE](LICENSE) 和 [版权与使用说明](docs/COPYRIGHT.md)。
-
-**曲谱、视频版权：**请仅处理你有权使用的素材；转换成 PDF / GP5 不会自动取得原作品的传播、改编或销售授权，非商业使用也不当然免除版权义务。
-
-**项目来源：**本项目基于 [codemanhr/guitar-score-extractor](https://github.com/codemanhr/guitar-score-extractor) 二次开发。原项目提供视频抽帧、谱面区域选择、去重和 PDF 导出；本项目在此基础上增加了 **PDF / 截图识谱 → 乐谱编辑 → GP5 导出**。原项目 MIT 许可和版权声明保留在 [LICENSES/UPSTREAM-MIT.txt](LICENSES/UPSTREAM-MIT.txt)，详细来源见 [来源与致谢](docs/UPSTREAM.md)。
-
-当前定位是辅助转谱工具，需要对照原图检查结果。输出格式是 **`.gp5`**，可用 Guitar Pro 打开、播放、编辑，并另存为新版 `.gp`；目前不直接写出新版 `.gp` 或旧版 `.gtp`。
-
-## 能做什么
-
-| 功能 | 来源 / 当前状态 |
+| 乐器 | 可选调弦（低弦 → 高弦） |
 | --- | --- |
-| 上传视频、预览、框选谱面、按时间范围抽帧 | 沿用原项目；本分支优化框选响应，增加坐标与尺寸微调 |
-| 相似帧去重、整理 A4 PDF、查看处理进度 | 沿用原项目，补充 Windows 路径兼容 |
-| 从当前视频截图或外部 PDF 整理 TAB 谱行 | 新增；识别 4～6 根弦线，过滤无谱面图片 |
-| 读取品位、节奏、休止、延音、闷音和部分演奏符号 | 新增；优先使用 OpenCV + RapidOCR，也可使用视觉模型 |
-| 对照原图编辑小节、音符、时值和演奏属性 | 新增；可视化编辑及高级 JSON 编辑 |
-| 小节拍数检查、未识别项检查、人工核对标记 | 新增；存在结构错误时阻止导出 |
-| 下载 GP5 草稿 / 已核对 GP5 | 新增；使用 PyGuitarPro 生成文件 |
-| 保留已核对谱行、手动跳过重复或片尾谱行 | 新增；跳过可撤销，原图保留 |
-| Windows 后台启动、停止、日志和页面状态恢复 | 新增 |
+| 四弦贝斯 | 标准 E A D G、全降半音、全降全音、Drop D、Drop C |
+| 五弦贝斯 | 标准 B E A D G、全降半音、全降全音、Drop A |
 
-## 先准备运行环境
+六弦吉他、多声部指弹不属于本版已完成支持范围。原项目的视频抽帧、PDF 导出等工具保留在旧界面 `/?legacy=1`，新旧版本编辑数据独立，不是同步编辑器。
 
-推荐 **Windows 10 / 11 + Python 3.12 + Node.js 22 或 24 + FFmpeg**。本项目已在 Windows、Python 3.12、Node.js 24 环境验证。macOS / Linux 可按下文手动启动，尚未完成同等环境验证。
+## 下载哪个包
 
-- [Python 3.12](https://www.python.org/downloads/)：安装时勾选加入 PATH。当前依赖固定版本，请先使用 3.12。
-- [Node.js](https://nodejs.org/)：用于安装和构建前端。
-- [FFmpeg](https://ffmpeg.org/download.html)：需要 `ffmpeg`、`ffprobe` 都能在终端执行。即使只导入 PDF，当前服务启动时也会检查两者。
-- [Git](https://git-scm.com/downloads)：用于克隆代码；也可直接下载源码 ZIP。
-- Ollama **可选**：本地规则支持的谱面不需要安装视觉模型。
+在 [Releases](https://github.com/Bionysus-bot/video-tab-to-gp5/releases/tag/v0.3.0-preview.1) 下载：
 
-Windows 可用以下命令安装 FFmpeg，然后重新打开终端：
+| 文件 | 适用场景 |
+| --- | --- |
+| `video-tab-to-gp5-web.zip` | 推荐本机使用，已含构建好的前端；仍需 Python 3.12、后端依赖和 FFmpeg，无需 Node.js |
+| `video-tab-to-gp5-source.zip` | 二次开发，需自行安装 Node.js 并构建前端 |
+| `SHA256SUMS.txt` | 核对两个 ZIP 的校验值 |
+
+这两个包均不包含 Python 运行时、OCR 模型下载缓存、用户视频 / PDF / GP5、项目数据或密钥。GitHub 自动生成的 Source code 包同样需要自行构建前端。
+
+## Windows 快速启动（推荐已构建前端包）
+
+准备 Python **3.12**、FFmpeg（含 `ffprobe`）。安装 Python 时启用启动器并加入 PATH；安装 FFmpeg 后重新打开终端。
 
 ```powershell
 winget install --id Gyan.FFmpeg -e
-```
-
-安装后检查：
-
-```powershell
 py -3.12 --version
-node --version
-npm --version
 ffmpeg -version
 ffprobe -version
 ```
 
-## Windows 安装与启动
-
-在 PowerShell 中逐行运行：
+解压 `video-tab-to-gp5-web.zip`，在解压出的 `video-tab-to-gp5` 目录打开 PowerShell：
 
 ```powershell
-git clone https://github.com/Bionysus-bot/video-tab-to-gp5.git
-cd video-tab-to-gp5
-git switch codex/combined-tab-wip
-
 py -3.12 -m venv backend/.venv
 ./backend/.venv/Scripts/python.exe -m pip install --upgrade pip
 ./backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
+powershell -ExecutionPolicy Bypass -File ./start.ps1 -Port 8001
+```
 
+看到 `Running: http://127.0.0.1:8001` 后，打开 **<http://127.0.0.1:8001/>**。首次安装依赖、初始化 OCR 可能需要网络。
+
+日常使用只需启动，不必重新安装：
+
+```powershell
+# 启动
+powershell -ExecutionPolicy Bypass -File ./start.ps1 -Port 8001
+# 停止
+powershell -ExecutionPolicy Bypass -File ./stop.ps1
+```
+
+服务后台运行；关机或重启后需要再次启动。若提示已有服务运行，请访问输出中的实际地址；不同端口不能共用同一份运行记录。
+
+### 从源码安装
+
+安装 Node.js 22 / 24 和 Git，然后执行：
+
+```powershell
+git clone --branch v0.3.0-preview.1 --single-branch https://github.com/Bionysus-bot/video-tab-to-gp5.git
+cd video-tab-to-gp5
+py -3.12 -m venv backend/.venv
+./backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
 cd frontend
 npm ci
 npm run build
 cd ..
-
-powershell -ExecutionPolicy Bypass -File ./start.ps1
-```
-
-看到 `Running: http://127.0.0.1:8000` 后，在浏览器打开 **<http://127.0.0.1:8000/>**。
-
-服务在后台运行，关闭终端后仍可访问；电脑重启后需要再次启动。日常启动无需重新安装依赖或构建：
-
-```powershell
-# 启动
-powershell -ExecutionPolicy Bypass -File ./start.ps1
-
-# 停止
-powershell -ExecutionPolicy Bypass -File ./stop.ps1
-
-# 8000 端口被占用时
 powershell -ExecutionPolicy Bypass -File ./start.ps1 -Port 8001
 ```
 
-从 [Releases](https://github.com/Bionysus-bot/video-tab-to-gp5/releases) 下载 `video-tab-to-gp5-web.zip` 时，包内已包含构建好的页面：解压后安装 Python 依赖、FFmpeg，直接运行 `start.ps1` 即可，**可跳过 Node.js 和前端构建**。`source.zip` 和 GitHub 的 Source code 压缩包则需要执行完整构建步骤。
+macOS / Linux 的手动启动方法见 [开发说明](docs/DEVELOPMENT.md)，尚未完成与本机 Windows 相同的安装验收。
 
-## 使用方法
+## 使用：三步转谱
 
-### 方式一：从视频开始
+### 1. 准备素材
 
-1. 打开页面，上传本地视频。
-2. 预览到谱面清晰的位置，框选完整的 TAB 区域，松开后自动保存。可在下方修改 **X（左边距）、Y（上边距）、宽度、高度**，点击 **应用参数** 或按 Enter 保存；单位是原视频像素，超出画面的参数会自动调整。重新拖动可重画选框，拖动中按 Esc 可取消。保留小节线、数字、符干和符尾，不要只截弦线中间的一条窄带。
-3. 设置开始 / 结束时间和采样帧率，点击 **开始处理**。可先用较短片段确认裁切结果。
-4. 完成后可下载 PDF。需要继续转谱时，在 **转换为 Guitar Pro 谱** 区域点击 **读取当前视频截图**。
-5. 检查每行原图和过滤结果，再按下面的识谱流程操作。
+1. 点击 **导入视频 / pdf**，选择本地视频或不超过 50 MB 的 PDF。重新导入会建立独立项目。
+2. 在清晰画面中框选谱面；可修改起点、宽度、高度并应用。联合谱必须包括上方五线谱、下方全部 TAB 弦线和小节编号。
+3. 选择纯 TAB 或五线谱＋TAB，再选四弦 / 五弦贝斯、调弦方案及速度。速度和调弦使用设置值，不能凭截图缺失的信息自动还原。
+4. 视频帧率和开始时间在 **设置 → 视频** 中调整。PDF 选区按第一页比例应用于所有页，混合版式请分项目导入。
 
-### 方式二：已有 PDF
+### 2. 自动识谱
 
-无需上传视频。在 **转换为 Guitar Pro 谱** 区域点击 **导入 PDF**，选择不超过 **50 MB** 的 PDF，然后检查整理出的谱行。
+点击 **开始自动识谱**，程序整理谱行、本地识别、校验并生成草稿；有条件时进行原视频补读及可选局部模型复核。可以切换视图、取消任务，或在有检查点时继续。
 
-视频截图和 PDF 是两种输入方式，任选一种即可。重新导入 PDF 或重新读取截图会重建谱行、清空该项目现有转谱数据；重要结果请先下载或备份。
+草稿不以置信度低为由整体禁用下载。已知音符尽量保留，缺失小节或不确定拍位有明确标注；局部候选不是已确认音符。纯 PDF 没有对应视频帧时不能从视频补读。
 
-### 识谱、校对与导出
+### 3. 结果校对
 
-先选择“谱面类型”。纯 TAB 沿用原识别方式；五线谱＋TAB 从上方读取节奏、下方读取品位。已有项目切换类型后，点击 **更新谱行图片（保留校对）**；错误的已核对行可通过 **取消此行核对，允许重识别** 明确放开重识别权限。详见 [联合谱试用说明](docs/COMBINED_TAB.md)。
+- 按疑点选择小节，对照原图修改品位、弦号、时值、休止、延音等。弦号 1 是图中最上方的弦；第五弦是标准五弦贝斯最低音弦。
+- **保存修改**会另存一个版本。切换小节、项目或版本时，未保存的修改会提示处理。
+- 核对完成后点击 **保存并确认此小节**，或 **确认全部 · N**；批量范围是当前版本全部未确认小节，不受左侧筛选影响。
+- 已确认小节在新 GP5 中不再显示核对文字；拍数错误、缺少音符或结构冲突的小节会保留标注并提示原因。再次编辑会取消该小节的确认状态。
+- 下载新草稿到 Guitar Pro 播放核对。已下载的旧 GP5 不会被追溯修改。
 
-1. **选乐器、填速度。** 默认是四弦贝斯标准调弦；吉他可切换为六弦。默认速度 `120` 是占位值，需改成实际 BPM。特殊调弦在高级数据中修改，按最高音弦到最低音弦填写 MIDI 音高。
-2. **先试少量谱行。** 保持默认的本地优先策略，先识别前 3 行；效果合适后再提高行数。这里的数字表示“从开头处理前几行”，不是“接着处理几行”。
-3. **对照原图修改。** 检查弦号、品位、时值、休止、延音与演奏属性。`4` 表示四分音符、`8` 表示八分音符；空音符列表表示休止；弦号 `1` 是图中最上方的弦。
-4. **保存并校验。** 查看拍数不符、未知音符、延音关系等提示，修正后再次保存。当前本地读取的小节编号按画面顺序暂定，拍号暂按 `4/4`，都需要核对。
-5. **先下载草稿试听。** 拍数等结构检查通过、速度和调弦已确认后，可点击 **下载 GP5 草稿（供核对）**，在 Guitar Pro 中检查。草稿不会自动标记为已核对。
-6. **逐小节确认。** 对照原图检查无误后，勾选对应小节的核对标记，再保存；所有小节通过校验并核对后，可下载已核对 GP5。
+含第五弦音符的乐谱切回四弦会被阻止，避免丢音。调弦或弦数变更会撤销设置确认，保存后按需重新确认。
 
-联合谱草稿有占位小节，而且本项目保留了生成这份 PDF 的原视频帧时，可点击 **从原视频补读占位小节（另存草稿）**。程序从其他帧保留完整小节与边缘残留，按印刷编号对应，并用至少两个已识别小节核对来源。完成后点击 **下载原视频补读草稿 GP5**；下方可查看每个补读小节的原视频画面。该功能另存结果、保留源乐谱，不使用其他乐句来补音。纯 PDF 项目没有原视频帧时不能使用。
+## 可选视觉模型
 
-诊断草稿允许保留低置信度音高候选并标注 `CHECK`；仍缺失或时值不完整的小节显示 `UNREADABLE` 占位。零占位表示导出文件没有替代小节，仍需核对标记出的音符，不能等同于完整转谱已经准确。
-
-仅勾选核对标记不会修复识别错误。程序不会为了凑满一小节而自动补音、补休止；未识别的音高、时值及拍数错误会阻止草稿和正式导出。
-
-### 重复画面和重新识别
-
-- 视频帧去重主要用于 PDF 整理；识谱阶段不会因为两段旋律相同就删除其中一段。
-- 明确是重复画面、片尾静止页时，可手动跳过该谱行并填写原因；可随时恢复。
-- 页面分别显示可识别行数、检测总行数和已跳过行数；下拉列表保留跳过行，支持按 PDF 页码和页内行号核对。谱行检测不等于音符识别完成，仍需检查原图是否完整。
-- 一行中只要有一个小节已核对，重新识谱会保留整行，包括该行尚未核对的手工修改。想重新识别这一行，先取消该行所有小节的核对标记并保存。
-- 跳过含已核对小节的谱行前，也需要先取消该行核对标记。
-- 本地优先模式会缓存机器识谱结果。原图、调弦、行信息、小节起始编号、前行音符上下文或识别程序 / OCR 权重变化时自动重新计算。视觉模型返回结果不进入此缓存。
-- 想重新计算未核对行时，勾选 **忽略缓存，重新识别未核对谱行**；已核对行仍受保护。日志会显示复用缓存的行数和本次耗时，复用缓存不等于人工核对。
-
-## 可选：使用 Ollama 视觉模型
-
-当本地读取不支持某种谱面布局时，可使用本机视觉模型。安装并运行 [Ollama](https://ollama.com/)，下载明确的非思考版本：
+无需模型也可使用本地识谱。在 **设置 → 模型** 启用局部复核，例如本机 Ollama 非思考视觉模型：
 
 ```powershell
 ollama pull qwen3-vl:8b-instruct
-ollama list
 ```
 
-如果 Ollama 没有运行，先启动 Ollama 应用，或在单独终端运行 `ollama serve`。模型下载需要网络及足够的磁盘、内存；运行速度取决于本机硬件。
+运行 Ollama，填写地址 `http://127.0.0.1:11434`、模型 `qwen3-vl:8b-instruct`，再检测本地模型。模型失败或超时会保留疑点，不能保证自动修好每个音符。
 
-页面中填写：
+兼容图片接口使用 `TAB_VISION_API_KEY` 启动环境变量提供密钥，不自动加载 `.env`。**启用远程服务会把谱面图片发送到该服务。**
 
-| 项目 | 值 |
-| --- | --- |
-| 服务 | Ollama |
-| 接口地址 | `http://127.0.0.1:11434` |
-| 视觉模型 | `qwen3-vl:8b-instruct` |
-| 策略 | 默认本地优先；需要比较模型效果时切换为视觉模型 |
+## 数据备份与升级
 
-点击 **检测本地模型**，确认模型支持图片输入。遇到持续思考、没有答案时，先核对完整模型名包含 `instruct`。模型正常返回也可能识别出 0 小节；请检查完整小节、清晰度和符尾是否保留，必要时换模型或手工编辑。
+- 用户素材与数据：`storage/projects/`，新版结果、任务、GP5 和版本在项目 `score/v2/` 下。
+- 旧流程数据：项目 `score/score.json` 等，旧工具不会同步修改新版结果。
+- 后台日志：`.runtime/server.log`、`.runtime/server-error.log`。
 
-也支持接收图片的 OpenAI 兼容接口：选择兼容服务，填写含 `/v1` 的 API 地址和模型名。密钥从启动服务的环境变量 `TAB_VISION_API_KEY` 读取；不会从 `.env` 自动加载。**使用远程兼容接口时，所处理的谱行图片会发送给该服务。**
+升级前停止服务、备份整个 `storage/projects/`。建议将新包解压到新目录，安装依赖后复制备份的 `storage/projects/`，再启动；不要删除原目录或覆盖外部人工修正的 GP5。旧数据首次进入新版会作为独立版本导入，Guitar Pro 外部修改不会自动同步回来。
 
-## 当前识别范围与限制
+若需回退代码，保留数据备份并使用旧发布包；旧界面不能读取所有新版版本数据。请勿同时启动两个服务写入同一数据目录。
 
-- 本地识别针对清晰、水平排列、弦距较均匀的 4～6 弦 TAB，主要围绕四弦贝斯素材验证。六弦或其他排版需要另行检查。
-- 已处理的符号包括品位数字、X 闷音、常见时值与休止、附点、断奏、括号延音、部分滑音 / 连奏滑音 / 滑出、击勾弦和倚音。能保存某项演奏属性，不代表所有字体和布局都能自动识别。
-- 倚音时值看不清时，暂用拍外 32 分倚音并提示人工确认。三连音可在结构化数据中表达，自动识别不作准确率保证。
-- 手写谱、模糊或遮挡、缺少节奏信息、复杂多声部、跨行残缺小节、复杂反复记号展开暂不保证。
-- 不能从没有标注的截图可靠还原调弦、速度，不能仅凭 PDF 证明视频中的所有小节都已提取。源素材完整性仍需人工检查。
-- 目前导出单个吉他 / 贝斯音轨；GP5 标题采用西文编码，建议使用英文标题。
-- 此工具读取画面中已有的谱，不做音频听写。
+## 验证与限制
 
-## 数据、日志和备份
+本机完整回归 **148 项通过**，前端类型检查及构建通过。实际测试了 PDF → 3 小节 / 19 音符草稿、调弦保存、批量确认、版本回退和 GP5 回读；五弦合成 TAB 用真实 OCR 读出最低弦 4 个音符，并验证第五弦编辑及导出。[功能测试记录](docs/FUNCTIONAL_TEST_2026-10-24.md) · [五弦验证范围](docs/FIVE_STRING_BASS.md)
 
-| 路径 | 内容 |
-| --- | --- |
-| `storage/projects/<项目ID>/` | 上传视频、截图、PDF 和项目配置 |
-| `storage/projects/<项目ID>/score/` | `manifest.json`（谱行）、`score.json`（可编辑谱）、`task.json`（进度）和 GP5 |
-| `.runtime/server.log` | Windows 后台运行日志 |
-| `.runtime/server-error.log` | Windows 后台错误日志 |
-
-备份时复制整个 `storage/projects/`。浏览器会记住最近的项目 ID。仓库与发布包不包含用户视频、曲谱或运行数据。
+- 五弦联合谱包含合成图与 OCR 桩测试，仍需不同字体和真实整曲验收；未宣称所有曲谱达到同样准确度。
+- 模糊、手写、遮挡、缺少节奏、复杂多声部、反复展开和跨图缺失弧线不保证识别。
+- 全新机器安装、真实视觉模型效果及 Guitar Pro 整曲逐音听奏尚未完成本版全面验收。
+- 当前输出单个贝斯音轨、`.gp5` 格式；可在 Guitar Pro 中另存新版 `.gp`，不直接写出 `.gtp` 或新版 `.gp`。标题建议使用英文。
 
 ## 常见问题
 
-| 现象 | 操作 |
+| 问题 | 处理 |
 | --- | --- |
-| PowerShell 禁止运行脚本 | 使用上文 `powershell -ExecutionPolicy Bypass -File ...`，无需永久修改系统策略 |
-| 找不到 `py` | 安装 Python 3.12 和启动器，或确认 `python --version` 为 3.12 后将 `py -3.12` 换成 `python` |
-| `pip` 安装失败或要求编译 NumPy | 检查使用的是 Python 3.12；若环境用错，换一个新目录按安装步骤重建虚拟环境 |
-| 缺少 FFmpeg / FFprobe | 安装后重开终端，确认两条 `-version` 命令都能执行 |
-| 8000 端口被占用 | 启动时加 `-Port 8001`，访问日志显示的新地址 |
-| 页面空白、构建产物不存在 | 在 `frontend` 中运行 `npm ci`、`npm run build`，再重启服务 |
-| 没有检测到 Ollama | 本地支持的谱面仍可先识别；需要模型时启动 Ollama 并检查 11434 端口 |
-| 识别 0 小节 / clipped measure | 查看原图是否含完整小节线、数字和符尾；先试一行，检查裁切或换模型 |
-| GP5 下载按钮不可用 | 先保存修改、确认速度调弦，处理校验错误；正式版还需要核对全部小节 |
-| 中文标题导出失败 | 将乐谱标题改成英文后保存 |
-| 改了前端代码却没变化 | 重新 `npm run build`，停止并启动服务，然后刷新页面 |
+| 页面打不开 | 运行 `start.ps1 -Port 8001`，以启动输出的地址为准；重启电脑后需再次启动 |
+| 找不到 FFmpeg / FFprobe | 安装后重开终端，检查两条 `-version` 命令 |
+| Python 依赖安装失败 | 确认使用 Python 3.12，换新虚拟环境安装固定依赖 |
+| 前端不存在 / 修改没生效 | 源码安装需 `npm ci`、`npm run build`；发布的 web 包已有前端，刷新页面即可 |
+| 小节遗漏或标注多 | 检查完整弦线、编号、符尾及截图边界；草稿可先下载，标注不代表整小节都错 |
+| 确认被跳过 | 展开跳过原因，修正拍数、缺失音符或延音对应后再次确认 |
 
-## 开发、测试与打包
-
-后端测试使用标准库 `unittest`，无需额外安装测试框架：
+## 开发与打包
 
 ```powershell
 cd backend
-./.venv/Scripts/python.exe -m unittest discover -s tests -v
+./.venv/Scripts/python.exe -m unittest discover -s tests -q
 cd ../frontend
+npm ci
 npm run build
 cd ..
-```
-
-生成干净的源码 ZIP 和包含已构建页面的 ZIP：
-
-```powershell
 ./backend/.venv/Scripts/python.exe scripts/package.py
 ./backend/.venv/Scripts/python.exe scripts/package.py --include-web
 ```
 
-产物在 `.release/`。详细目录、开发模式、macOS / Linux 启动方法和测试说明见 [开发说明](docs/DEVELOPMENT.md)，版本变化见 [CHANGELOG](CHANGELOG.md)。
+产物位于 `.release/`。设计文档：[PRD](docs/PRD.md)、[技术设计](docs/TECHNICAL_DESIGN.md)、[UI 设计](docs/UI_DESIGN.md)、[开发计划](docs/DEVELOPMENT_PLAN.md)。
 
-## 许可与致谢
+## 项目来源、许可与版权
 
-本仓库采用分范围许可：自 v0.1.1 起首次发布、且发布者有权许可的原创新增内容使用 [自定义非商业许可](LICENSE)；上游 MIT 代码和已按 MIT 发布的历史内容保留原有权限。带商业用途限制的部分属于源码公开项目，不宣称采用 OSI 开源许可，不能把整个仓库简单视为全部 MIT 或全部禁止商业使用。
+基于 [codemanhr/guitar-score-extractor](https://github.com/codemanhr/guitar-score-extractor) 二次开发。上游提供视频抽帧、区域选择、去重和 PDF 导出；本项目新增截图 / PDF 识谱、复核、版本化乐谱编辑、GP5 导出、新工作区及五弦支持。[来源说明](docs/UPSTREAM.md) · [上游 MIT 许可](LICENSES/UPSTREAM-MIT.txt)
 
-请勿将受非商业条款约束的内容用于付费转谱、收费 API / SaaS、广告变现服务或商业产品，除非另获相应权利人书面授权。对输入作品和转换结果，仍须独立确认复制、改编与传播权限。完整说明及版权反馈渠道见 [版权与使用说明](docs/COPYRIGHT.md)。
+**禁止商业用途的范围：**自 v0.1.1 起新授权、且发布者有权许可的原创新增内容，未经相应权利人书面许可，不得用于收费转谱、收费 API / SaaS、商业产品或其他变现服务。[项目许可](LICENSE) · [版权与使用说明](docs/COPYRIGHT.md)
 
-视频转截图 / PDF 的基础来自 [codemanhr/guitar-score-extractor](https://github.com/codemanhr/guitar-score-extractor)，保留其 `Copyright (c) 2024 Guitar Score Extractor` 声明；GP5 写入使用 [PyGuitarPro](https://pyguitarpro.readthedocs.io/)，本地 OCR 使用 [RapidOCR](https://github.com/RapidAI/RapidOCR)。依赖和模型遵循各自许可；输入曲谱、视频及其中作品不属于本项目软件许可的授权范围。
+上游 MIT、历史已按 MIT 发布的内容和第三方依赖保留原有权限，不追溯撤销。中文字体 [Fusion Pixel](https://github.com/TakWolf/fusion-pixel-font) 独立遵循 SIL OFL 1.1，许可及上游声明保存在 [LICENSES/fusion-pixel](LICENSES/fusion-pixel/)。GP5 写入使用 [PyGuitarPro](https://github.com/Perlence/PyGuitarPro)，OCR 使用 [RapidOCR](https://github.com/RapidAI/RapidOCR)。
+
+请只处理有权使用的视频和曲谱。非商业使用、格式转换均不会自动取得原作品的复制、改编、传播或销售授权。本项目不把用户素材纳入软件许可或发布包。
