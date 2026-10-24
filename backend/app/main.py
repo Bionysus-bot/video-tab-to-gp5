@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -21,7 +22,7 @@ def _check_dependencies():
             missing.append(cmd)
     if missing:
         print(
-            f"❌ 缺少系统依赖: {', '.join(missing)}",
+            f"缺少系统依赖: {', '.join(missing)}",
             file=sys.stderr,
         )
         print("   安装方法:", file=sys.stderr)
@@ -30,7 +31,7 @@ def _check_dependencies():
         print("   Windows: winget install --id=Gyan.FFmpeg -e", file=sys.stderr)
         sys.exit(1)
     else:
-        print("✅ 系统依赖检查通过 (ffmpeg / ffprobe)")
+        print("系统依赖检查通过 (ffmpeg / ffprobe)")
 
 
 _check_dependencies()
@@ -51,7 +52,7 @@ app.include_router(score_router, prefix="/api")
 app.include_router(conversion_router, prefix="/api")
 
 # Serve the production frontend from the same origin as the API.
-frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+frontend_dist = Path(os.environ["PUJIAN_FRONTEND_DIR"]) if os.environ.get("PUJIAN_FRONTEND_DIR") else Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if (frontend_dist / "index.html").is_file():
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 

@@ -17,6 +17,8 @@ TREES = (
     ('backend/app', '*.py'), ('backend/tests', 'test_*.py'),
     ('frontend/src', '*'), ('docs', '*.md'), ('scripts', '*.py'),
     ('.github/workflows', '*.yml'), ('LICENSES', '*.txt'),
+    ('desktop', '*.py'), ('desktop', '*.spec'), ('desktop', '*.iss'),
+    ('desktop', '*.txt'), ('desktop', '*.md'),
 )
 
 
