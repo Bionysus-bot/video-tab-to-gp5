@@ -18,7 +18,7 @@ class ConversionRequest(BaseModel):
     recover: bool = True
     force: bool = False
     tempo: int = Field(default=120, ge=20, le=300)
-    tuning: list[int] = Field(default_factory=lambda:[43,38,33,28], min_length=4, max_length=4)
+    tuning: list[int] = Field(default_factory=lambda:[43,38,33,28], min_length=4, max_length=5)
     budget_seconds: int = Field(default=600, ge=10, le=1800)
 
     @model_validator(mode='after')
@@ -26,7 +26,7 @@ class ConversionRequest(BaseModel):
         if self.roi and (min(self.roi.x,self.roi.y)<0 or min(self.roi.width,self.roi.height)<1):
             raise ValueError('选区起点不能为负，宽高必须大于零。')
         if self.tuning!=sorted(set(self.tuning),reverse=True) or any(v<0 or v>127 for v in self.tuning):
-            raise ValueError('调弦需从高到低填写四个不同的 MIDI 音高（0–127）。')
+            raise ValueError('调弦需从高到低填写四或五个不同的 MIDI 音高（0–127）。')
         return self
 
 

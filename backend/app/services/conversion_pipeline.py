@@ -259,7 +259,8 @@ def run(store, project_id, job, cancel):
                 paths=None
             if paths is not None:
                 manifest=call('app.services.conversion_workers','prepare_rows',
-                    (paths,prepared/'rows',config['layout'],config['source']=='video'))
+                    (paths,prepared/'rows',config['layout'],config['source']=='video')
+                    + ((5,) if len(config['tuning']) == 5 else ()))
                 if config['source']=='video':
                     sources=read(prepared/'video-sources.json',{})
                     for row in manifest['rows']:

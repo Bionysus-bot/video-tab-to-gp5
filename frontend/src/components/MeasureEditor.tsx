@@ -1,6 +1,7 @@
 import type { Measure } from '../services/workspace';
-export default function MeasureEditor({ measure, onChange }: {
+export default function MeasureEditor({ measure, onChange, stringCount = 4 }: {
     measure: Measure;
+    stringCount?: number;
     onChange: (value: Measure) => void;
 }) {
     const change = (bi: number, update: (m: Measure) => void) => { const next = structuredClone(measure); update(next); next.reviewed = false; onChange(next); void bi; };
@@ -12,7 +13,7 @@ export default function MeasureEditor({ measure, onChange }: {
         <div className="inline-options"><label><input type="checkbox" checked={beat.dotted} onChange={e => change(bi, m => { m.beats[bi].dotted = e.target.checked; })}/>附点</label><label><input type="checkbox" checked={beat.triplet} onChange={e => change(bi, m => { m.beats[bi].triplet = e.target.checked; })}/>三连</label></div>
       </td><td>{beat.notes.length ? beat.notes.map((note, ni) => <div className="note-fields" key={ni}>
         <input aria-label={`第${bi + 1}拍第${ni + 1}音品位`} type="number" min={0} max={36} value={note.fret} onChange={e => change(bi, m => { m.beats[bi].notes[ni].fret = Number(e.target.value); m.beats[bi].unresolved = beat.unresolved.filter(v => v !== 'pitch'); m.beats[bi].ocr_confidence = null; m.beats[bi].pitch_evidence = null; })}/>
-        <select aria-label={`第${bi + 1}拍第${ni + 1}音弦号`} value={note.string} onChange={e => change(bi, m => { m.beats[bi].notes[ni].string = Number(e.target.value); })}>{[1, 2, 3, 4].map(v => <option key={v} value={v}>{v} 弦</option>)}</select>
+        <select aria-label={`第${bi + 1}拍第${ni + 1}音弦号`} value={note.string} onChange={e => change(bi, m => { m.beats[bi].notes[ni].string = Number(e.target.value); })}>{Array.from({ length: stringCount }, (_, i) => i + 1).map(v => <option key={v} value={v}>{v} 弦</option>)}</select>
       </div>) : <span className="muted">{beat.unresolved.includes('pitch') ? <>音符缺失 <button className="text-button" onClick={()=>change(bi,m=>{m.beats[bi].unresolved=m.beats[bi].unresolved.filter(v=>v!=='pitch')})}>确认为休止</button></> : '休止'}</span>}</td><td>{beat.notes.map((note, ni) => <div key={ni} className="note-fields"><select aria-label={`第${bi + 1}拍第${ni + 1}音演奏法`} value={note.kind} onChange={e => change(bi, m => { m.beats[bi].notes[ni].kind = e.target.value as typeof note.kind; })}><option value="normal">普通音</option><option value="tie">延音</option><option value="dead">闷音</option></select><label><input type="checkbox" checked={!!note.slide} onChange={e => change(bi, m => { m.beats[bi].notes[ni].slide = e.target.checked; })}/>滑音</label></div>)}</td>
       <td><span className={beat.unresolved.length ? 'warning-text' : 'muted'}>{beat.unresolved.map(v => v === 'pitch' ? '音高' : '时值').join('、') || '—'}</span></td></tr>)}
     </tbody></table></div>

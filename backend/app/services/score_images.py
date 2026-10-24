@@ -79,7 +79,7 @@ def bar_positions(image: np.ndarray, lines: list[int]) -> list[int]:
     return peaks
 
 
-def notation_staves(image: np.ndarray, groups: list[list[int]]) -> list[list[int]]:
+def notation_staves(image: np.ndarray, groups: list[list[int]], allow_equal_five: bool = False) -> list[list[int]]:
     """Pair faint five-line notation with the TAB directly below it."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     margin = max(1, image.shape[1] // 30)
@@ -99,14 +99,15 @@ def notation_staves(image: np.ndarray, groups: list[list[int]]) -> list[list[int
                     and 1.5 * spacing < tab[0] - five[-1] < 8 * spacing
                     and not any(five[0] <= group[-1] and group[0] <= five[-1]
                                 and not (len(group) == 5 and abs(group[0] - five[0]) <= 3
-                                         and abs(group[-1] - five[-1]) <= 3 and spacing < tab_spacing * .85)
+                                         and abs(group[-1] - five[-1]) <= 3
+                                         and (spacing < tab_spacing * .85 or allow_equal_five))
                                 for group in groups)):
                 candidates.append(five)
         paired.append(max(candidates, key=lambda lines: lines[-1]) if candidates else [])
     return paired
 
 
-def prepare_images(inputs: list[Path], output: Path, layout: str = 'auto') -> dict:
+def prepare_images(inputs: list[Path], output: Path, layout: str = 'auto', expected_strings: int | None = None) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     rows = []
     rejected = []
@@ -120,7 +121,7 @@ def prepare_images(inputs: list[Path], output: Path, layout: str = 'auto') -> di
         if not groups:
             rejected.append(dict(source=source, reason="未检测到四至六根等距弦线，可能是黑屏、片尾或模糊帧，请复查"))
             return
-        notation = notation_staves(image, groups) if layout != 'tab' else [[] for _ in groups]
+        notation = notation_staves(image, groups, allow_equal_five=expected_strings == 5) if layout != 'tab' else [[] for _ in groups]
         # Strong standard staves may also pass the original line detector.
         # Pair them with the lower TAB instead of exposing a false five-string row.
         keep = [i for i, group in enumerate(groups) if not any(

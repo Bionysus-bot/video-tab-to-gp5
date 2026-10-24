@@ -7,6 +7,8 @@ import type { Artifact } from '../services/workspace';
 import ROISelector from '../components/ROISelector';
 import MeasureEditor from '../components/MeasureEditor';
 import Botanical from '../components/Botanical';
+import BassStringsSelect from '../components/BassStringsSelect';
+import { FIVE_STRING_STANDARD } from '../components/fiveStringTunings';
 import TuningSelect, { STANDARD_TUNING } from '../components/TuningSelect';
 import '../studio.css';
 type View = 'prepare' | 'convert' | 'results';
@@ -306,9 +308,17 @@ export default function Studio() {
         });
     }
     function changeTuning(value: number[]) {
+        if (draft?.measures.some(m => m.beats.some(b => b.notes.some(n => n.string > value.length)))) {
+            setError('当前乐谱含有额外弦的音符，请先处理这些音符，再切换为较少弦数。');
+            return;
+        }
         setTuning(value);
         if (draft) { setDraft({ ...draft, tuning: value, settings_confirmed: false }); setDirty(true); }
     }
+    const bassStrings = (draft?.tuning || tuning).length;
+    const instrumentChoice = <BassStringsSelect count={bassStrings} disabled={busy || running} onChange={count => {
+        if (count !== bassStrings) changeTuning([...(count === 5 ? FIVE_STRING_STANDARD : STANDARD_TUNING)]);
+    }}/>;
     const art = data?.artifacts.find(a => a.revision === revision?.id) || (job?.artifact && job.artifact.revision === revision?.id ? job.artifact : null);
     const issues = revision?.issues.filter(i => filter === 'all' || (filter === 'important' ? !['ocr_notice', 'settings_unconfirmed'].includes(i.kind) : i.kind === filter)) || [];
     const measure = draft?.measures[selected];
@@ -340,7 +350,7 @@ export default function Studio() {
        {source === 'video' && config?.video && <div className="timeline"><span>画面时间</span><input aria-label="选择视频画面时间" type="range" min={0} max={config.video.duration} step={.5} value={time} onChange={e => setTime(Number(e.target.value))}/><output>{Math.floor(time / 60)}:{String(Math.floor(time % 60)).padStart(2, '0')}</output></div>}
        {pdf && <p className="canvas-caption">{pdf.pages} 页 · 选区应用于所有页，版式不同请分开导入。</p>}</> : <div className="empty-canvas"><Mark /><h2>导入你的乐谱</h2><p>支持视频与 pdf</p><button className="button secondary" disabled={busy} onClick={() => fileInput.current?.click()}>选择文件</button>{data?.revision && <button className="text-button" onClick={() => setSource('existing')}>使用旧项目已有谱行</button>}</div>}
    </section><aside className="setup-panel"><h2>转谱设置</h2><fieldset><legend>谱面类型</legend>{[['tab', '纯 tab'], ['standard-tab', '五线谱 ＋ tab']].map(([value, title]) => <label className={'type-option ' + (layout === value ? 'chosen' : '')} key={value}><input type="radio" name="layout" value={value} checked={layout === value} onChange={() => setLayout(value)}/><span><strong>{title}</strong></span></label>)}</fieldset>
-   <div className="setup-row"><span>乐器</span><strong>四弦贝斯</strong></div><div className="setup-row"><span>速度</span><label className="floating-field"><input aria-label="速度 bpm" type="number" min={20} max={300} value={tempo} onChange={e => setTempo(Number(e.target.value))}/><span className="field-label"> bpm</span></label></div><TuningSelect value={draft?.tuning || tuning} onChange={changeTuning} disabled={busy || running}/><p className="muted">速度、调弦请按原谱设置。</p>
+   {instrumentChoice}<div className="setup-row"><span>速度</span><label className="floating-field"><input aria-label="速度 bpm" type="number" min={20} max={300} value={tempo} onChange={e => setTempo(Number(e.target.value))}/><span className="field-label"> bpm</span></label></div><TuningSelect value={draft?.tuning || tuning} onChange={changeTuning} disabled={busy || running}/><p className="muted">速度、调弦请按原谱设置。</p>
    <button className="text-button settings-link" onClick={() => { setDrawerTab('score'); settings.current?.showModal(); }}>更多设置 →</button>
    <div className="setup-note">{layout === 'standard-tab' ? '选区包含五线谱、tab 与小节编号。' : '选区包含完整弦线、品位与节奏。'}</div>
    <button className="button primary start-button" disabled={busy || running || (!roi && source !== 'existing') || (source === 'existing' && !revision) || !project} onClick={() => guarded(() => { void start(); })}>{busy ? '正在准备…' : '开始自动识谱 →'}</button>
@@ -377,7 +387,7 @@ export default function Studio() {
                             }>(root + `/revisions/${revision.id}/rows/${row.id}/analysis`, {});
                             setOverlay({ revision: revision.id, source: measure.source, url: result.url });
                             setMessage('关联图是重新读取的候选，不会覆盖已保存乐谱。绿框为关联结果，橙框为弱读数，红框为未确定位置。');
-                        })}>{overlay?.revision === revision.id && overlay.source === measure.source ? '返回原图' : '查看音符关联图'}</button>}</div><fieldset className="editor-fields" disabled={busy}><MeasureEditor key={`${revision.id}-${selected}`} measure={measure} onChange={value => { const next = structuredClone(draft); value.reviewed=false; next.measures[selected] = value; setDraft(next); setDirty(true); }}/></fieldset><div className="measure-confirmation"><div><span>{measure.reviewed ? '已确认' : '确认此小节'}</span><p>{measure.reviewed ? '再次编辑将取消确认。' : '保存并去除谱内核对标注。'}</p></div><button className="button secondary" disabled={busy || measure.reviewed} onClick={()=>void confirmSelected()}>{busy ? '正在保存…' : measure.reviewed ? '已确认' : '保存并确认此小节'}</button></div></>}
+                        })}>{overlay?.revision === revision.id && overlay.source === measure.source ? '返回原图' : '查看音符关联图'}</button>}</div><fieldset className="editor-fields" disabled={busy}><MeasureEditor key={`${revision.id}-${selected}`} measure={measure} stringCount={draft.tuning.length} onChange={value => { const next = structuredClone(draft); value.reviewed=false; next.measures[selected] = value; setDraft(next); setDirty(true); }}/></fieldset><div className="measure-confirmation"><div><span>{measure.reviewed ? '已确认' : '确认此小节'}</span><p>{measure.reviewed ? '再次编辑将取消确认。' : '保存并去除谱内核对标注。'}</p></div><button className="button secondary" disabled={busy || measure.reviewed} onClick={()=>void confirmSelected()}>{busy ? '正在保存…' : measure.reviewed ? '已确认' : '保存并确认此小节'}</button></div></>}
    </section></div></> : <div className="empty-result"><Mark /><h2>乐谱尚未生成</h2><button className="button secondary" onClick={() => setView(running ? 'convert' : 'prepare')}>{running ? '查看识谱进度' : '导入并准备素材'}</button></div>}
    </>}
  </main>
@@ -386,7 +396,7 @@ export default function Studio() {
             if (e.target === settings.current)
                 settings.current.close();
         }}><div className="drawer"><header><h2>工作区设置</h2><button className="icon-button" aria-label="关闭设置" onClick={() => settings.current?.close()}>×</button></header><nav>{[['score', '乐谱'], ['model', '模型'], ['video', '视频'], ['about', '说明']].map(([key, title]) => <button key={key} className={drawerTab === key ? 'selected' : ''} onClick={() => setDrawerTab(key)}>{title}</button>)}</nav>
- {drawerTab === 'score' && <div className="drawer-body"><h3>四弦贝斯</h3><label className="floating-field"><span className="field-label">速度 bpm</span><input type="number" min={20} max={300} value={tempo} onChange={e => setTempo(Number(e.target.value))}/></label><TuningSelect value={draft?.tuning || tuning} onChange={changeTuning} disabled={busy || running}/>{draft && <><label className="check-label"><input type="checkbox" checked={draft.settings_confirmed} onChange={e => { setDraft({ ...draft, settings_confirmed: e.target.checked, tempo }); setDirty(true); }}/>我已确认速度、调弦与拍号设置</label><button className="button secondary" disabled={!dirty} onClick={() => perform(async () => { await save(); })}>保存乐谱设置</button></>}</div>}
+ {drawerTab === 'score' && <div className="drawer-body"><h3>{bassStrings === 5 ? '五弦贝斯' : '四弦贝斯'}</h3>{instrumentChoice}<label className="floating-field"><span className="field-label">速度 bpm</span><input type="number" min={20} max={300} value={tempo} onChange={e => setTempo(Number(e.target.value))}/></label><TuningSelect value={draft?.tuning || tuning} onChange={changeTuning} disabled={busy || running}/>{draft && <><label className="check-label"><input type="checkbox" checked={draft.settings_confirmed} onChange={e => { setDraft({ ...draft, settings_confirmed: e.target.checked, tempo }); setDirty(true); }}/>我已确认速度、调弦与拍号设置</label><button className="button secondary" disabled={!dirty} onClick={() => perform(async () => { await save(); })}>保存乐谱设置</button></>}</div>}
  {drawerTab === 'model' && <div className="drawer-body"><h3>局部视觉复核</h3><label className="check-label"><input type="checkbox" checked={review} onChange={e => setReview(e.target.checked)}/>自动复核具体疑点</label><p>可选，未启用时使用本地识谱。</p><label className="floating-field"><span className="field-label">服务</span><select value={provider} onChange={e => { setProvider(e.target.value); setBaseUrl(e.target.value === 'ollama' ? 'http://127.0.0.1:11434' : ''); }}><option value="ollama">本机 Ollama</option><option value="compatible">兼容图片接口</option></select></label><label className="floating-field"><span className="field-label">地址</span><input value={baseUrl} onChange={e => setBaseUrl(e.target.value)}/></label><label className="floating-field"><span className="field-label">视觉模型</span><input value={model} list="studio-models" placeholder="qwen3-vl:8b-instruct" onChange={e => setModel(e.target.value)}/><datalist id="studio-models">{models.map(m => <option key={m} value={m}/>)}</datalist></label><button className="button secondary" onClick={() => perform(async () => {
                 const next = await call<{
                     models: {

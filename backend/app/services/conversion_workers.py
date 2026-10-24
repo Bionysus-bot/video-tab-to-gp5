@@ -81,10 +81,10 @@ def preview_pdf(path, output, page_number=0):
         return dict(width=size[0], height=size[1], pages=len(document))
 
 
-def prepare_rows(paths, output, layout, video_mode=False):
+def prepare_rows(paths, output, layout, video_mode=False, expected_strings=None):
     from app.services.score_images import prepare_images
     from app.services.score_continuity import stitch_rows
-    manifest = prepare_images(paths, Path(output), layout)
+    manifest = prepare_images(paths, Path(output), layout, expected_strings=expected_strings)
     if layout == 'standard-tab':
         manifest['continuity_log'] = stitch_rows(Path(output), manifest['rows'],independent_anchors=video_mode)
     return manifest
