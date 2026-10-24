@@ -5,7 +5,7 @@ export default function MeasureEditor({ measure, onChange }: {
 }) {
     const change = (bi: number, update: (m: Measure) => void) => { const next = structuredClone(measure); update(next); next.reviewed = false; onChange(next); void bi; };
     return <section className="measure-editor" aria-label={`第 ${measure.number} 小节编辑器`}>
-    <div className="editor-heading"><h3>拍位与音符</h3><span>{measure.beats.length} 个拍位 · 修改后需保存</span></div>
+    <div className="editor-heading"><h3>拍位与音符</h3><span>{measure.beats.length} 个拍位</span></div>
     <div className="beat-table"><table><thead><tr><th>拍位</th><th>时值</th><th>品位 / 弦</th><th>演奏</th><th>疑点</th></tr></thead><tbody>
       {measure.beats.map((beat, bi) => <tr key={bi}><td className="beat-number">{bi + 1}</td><td>
         <select aria-label={`第${bi + 1}拍时值`} value={beat.duration} onChange={e => change(bi, m => { m.beats[bi].duration = Number(e.target.value); m.beats[bi].unresolved = beat.unresolved.filter(v => v !== 'duration'); })}>{[1, 2, 4, 8, 16, 32, 64].map(v => <option key={v} value={v}>{v === 1 ? '全音符' : `${v} 分`}</option>)}</select>
@@ -16,7 +16,7 @@ export default function MeasureEditor({ measure, onChange }: {
       </div>) : <span className="muted">{beat.unresolved.includes('pitch') ? <>音符缺失 <button className="text-button" onClick={()=>change(bi,m=>{m.beats[bi].unresolved=m.beats[bi].unresolved.filter(v=>v!=='pitch')})}>确认为休止</button></> : '休止'}</span>}</td><td>{beat.notes.map((note, ni) => <div key={ni} className="note-fields"><select aria-label={`第${bi + 1}拍第${ni + 1}音演奏法`} value={note.kind} onChange={e => change(bi, m => { m.beats[bi].notes[ni].kind = e.target.value as typeof note.kind; })}><option value="normal">普通音</option><option value="tie">延音</option><option value="dead">闷音</option></select><label><input type="checkbox" checked={!!note.slide} onChange={e => change(bi, m => { m.beats[bi].notes[ni].slide = e.target.checked; })}/>滑音</label></div>)}</td>
       <td><span className={beat.unresolved.length ? 'warning-text' : 'muted'}>{beat.unresolved.map(v => v === 'pitch' ? '音高' : '时值').join('、') || '—'}</span></td></tr>)}
     </tbody></table></div>
-    <details className="advanced-json"><summary>完整小节数据与其他演奏属性</summary><p className="muted">复杂演奏属性可在此修改；应用后仍需保存版本。</p><JsonEditor value={measure} onChange={onChange}/></details>
+    <details className="advanced-json"><summary>高级编辑</summary><p className="muted">应用后需保存。</p><JsonEditor value={measure} onChange={onChange}/></details>
   </section>;
 }
 import { useEffect, useState } from 'react';

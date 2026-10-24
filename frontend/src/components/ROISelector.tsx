@@ -201,7 +201,7 @@ export default function ROISelector({
           }} />
         )}
       </div>
-      <div className="roi-hint">拖动重新框选，松开保存；按 Esc 取消。下方参数以原视频像素为单位。</div>
+      <div className="roi-hint">拖动框选，松开保存 · Esc 取消</div>
       {roi && draft && (
         <form className="roi-editor" onSubmit={handleApply} noValidate>
           <div className="roi-fields">
@@ -217,7 +217,7 @@ export default function ROISelector({
           </div>
           <div className="roi-editor-actions">
             <button className="btn" type="submit" disabled={preview !== null}>应用参数</button>
-            <span className="roi-hint">画面 {videoWidth} × {videoHeight}；修改后点击应用或按 Enter。</span>
+            <span className="roi-hint">{videoWidth} × {videoHeight} 像素</span>
           </div>
           {error ? <div className="roi-error" role="alert">{error}</div> : (
             <div className="roi-coords" role="status">
