@@ -8,7 +8,7 @@ import numpy as np
 
 from app.models.score import Score
 from app.services.image_io import imread, imwrite
-from app.services.local_tab_reader import read_local_tab, staff_geometry
+from app.services.local_tab_reader import read_local_tab, slide_has_curve, staff_geometry
 from app.services.score_exporter import validate_score
 
 
@@ -26,6 +26,16 @@ def staff():
 
 
 class LocalReaderTests(unittest.TestCase):
+    def test_legato_curve_result_can_be_saved_as_json(self):
+        import json
+        gray = np.full((70, 250), 255, dtype=np.uint8)
+        curve = np.array([[40, 28], [85, 36], [150, 36], [200, 28]], dtype=np.int32)
+        cv2.polylines(gray, [curve], False, 0, 1)
+        value = slide_has_curve(gray, 20, 40, 200, 20)
+        self.assertIs(type(value), bool)
+        self.assertTrue(value)
+        self.assertEqual(json.loads(json.dumps({'legato_slide': value})), {'legato_slide': True})
+
     def test_page_borders_and_rest_strokes_are_not_barlines(self):
         image, lines = staff()
         cv2.line(image, (300, 105), (295, 135), (30, 30, 30), 2)

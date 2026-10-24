@@ -34,6 +34,7 @@ export default function Workspace() {
   const [progress, setProgress] = useState<TaskProgress | null>(null)
   const [running, setRunning] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const roiSaveRef = useRef<Promise<unknown>>(Promise.resolve())
   const [hasVideo, setHasVideo] = useState(false)
   const [previewTime, setPreviewTime] = useState(0)
   const previewWidth = 800
@@ -75,7 +76,10 @@ export default function Workspace() {
     async (newROI: ROI) => {
       if (!projectId) return
       setROI(newROI)
-      await api.setROI(projectId, newROI)
+      // Keep rapid consecutive selections in order without blocking drawing.
+      const save = roiSaveRef.current.catch(() => {}).then(() => api.setROI(projectId, newROI))
+      roiSaveRef.current = save
+      await save
     },
     [projectId]
   )
@@ -106,6 +110,7 @@ export default function Workspace() {
     setRunning(true)
     setProgress(null)
     try {
+      await roiSaveRef.current
       const result = await api.startProcessing(projectId)
       setProgress(result)
       // Poll progress
@@ -170,12 +175,14 @@ export default function Workspace() {
 
         {/* Right: parameters + progress + results */}
         <section className="workspace-right">
+          <details className="sidebar-fold"><summary>视频处理与 PDF 设置</summary>
           <ParameterPanel
             processing={processing}
             pdf={pdf}
             onProcessingChange={handleProcessingChange}
             onPDFChange={handlePDFChange}
           />
+          </details>
           <div className="action-bar">
             <button className="btn btn-primary" onClick={handleStart} disabled={running || !projectId}>
               {running ? '处理中...' : '开始处理'}

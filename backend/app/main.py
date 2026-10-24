@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
 from app.api.score_routes import router as score_router
+from app.api.conversion_routes import router as conversion_router
 
 
 # ── Dependency check ──
@@ -35,7 +36,7 @@ def _check_dependencies():
 _check_dependencies()
 
 
-app = FastAPI(title="Guitar Score Extraction API", version="0.1.0")
+app = FastAPI(title="Guitar Score Extraction API", version="0.3.0-preview.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,6 +48,7 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api")
 app.include_router(score_router, prefix="/api")
+app.include_router(conversion_router, prefix="/api")
 
 # Serve the production frontend from the same origin as the API.
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

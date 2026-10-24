@@ -9,21 +9,18 @@ import pypdfium2 as pdfium
 from app.services.image_io import imread, imwrite
 
 
-def staff_groups(image: np.ndarray) -> list[list[int]]:
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # Yellow playhead should not be mistaken for notation or a barline.
-    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                   cv2.THRESH_BINARY_INV, 51, 3)
-    horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN,
-                                  np.ones((1, max(30, image.shape[1] // 34)), np.uint8))
-    ys = np.flatnonzero((horizontal > 0).sum(axis=1) > image.shape[1] * 0.20)
+def _line_peaks(coverage: np.ndarray, threshold: float) -> list[int]:
+    ys = np.flatnonzero(coverage > threshold)
     peaks = []
     for y in ys:
         if not peaks or y - peaks[-1][-1] > 3:
             peaks.append([int(y)])
         else:
             peaks[-1].append(int(y))
-    lines = [int(np.mean(p)) for p in peaks]
+    return [int(np.mean(p)) for p in peaks]
+
+
+def _group_lines(lines: list[int], coverage: np.ndarray | None = None) -> list[list[int]]:
     groups = []
     index = 0
     while index < len(lines):
@@ -34,6 +31,12 @@ def staff_groups(image: np.ndarray) -> list[list[int]]:
                 continue
             gaps = np.diff(candidate)
             if 5 <= np.median(gaps) <= 90 and np.max(abs(gaps - np.median(gaps))) <= max(3, np.median(gaps) * .18):
+                # A fragmented line is accepted only beside a full set of
+                # regularly spaced strong lines, with at most one weak line.
+                if coverage is not None and sum(
+                    coverage[max(0, y - 3):y + 4].max() > .20 for y in candidate
+                ) < count - 1:
+                    continue
                 groups.append(candidate)
                 index += count
                 found = True
@@ -41,6 +44,24 @@ def staff_groups(image: np.ndarray) -> list[list[int]]:
         if not found:
             index += 1
     return groups
+
+
+def staff_groups(image: np.ndarray) -> list[list[int]]:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # Yellow playhead should not be mistaken for notation or a barline.
+    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                   cv2.THRESH_BINARY_INV, 51, 3)
+    horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN,
+                                  np.ones((1, max(30, image.shape[1] // 34)), np.uint8))
+    coverage = (horizontal > 0).sum(axis=1) / image.shape[1]
+    groups = _group_lines(_line_peaks(coverage, .20))
+    # Dense fret numbers can interrupt one string until less than 20% of the
+    # page width survives. Recover such rows without changing strong detections
+    # or inventing a line that has no visible horizontal evidence.
+    for candidate in _group_lines(_line_peaks(coverage, .10), coverage):
+        if not any(candidate[0] <= group[-1] and group[0] <= candidate[-1] for group in groups):
+            groups.append(candidate)
+    return sorted(groups, key=lambda group: group[0])
 
 
 def bar_positions(image: np.ndarray, lines: list[int]) -> list[int]:
@@ -58,7 +79,35 @@ def bar_positions(image: np.ndarray, lines: list[int]) -> list[int]:
     return peaks
 
 
-def prepare_images(inputs: list[Path], output: Path) -> dict:
+def notation_staves(image: np.ndarray, groups: list[list[int]], allow_equal_five: bool = False) -> list[list[int]]:
+    """Pair faint five-line notation with the TAB directly below it."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    margin = max(1, image.shape[1] // 30)
+    profile = np.percentile(gray[:, margin:-margin], 75, axis=1).astype(np.float32).reshape(-1, 1)
+    contrast = (cv2.morphologyEx(profile, cv2.MORPH_CLOSE, np.ones((15, 1), np.uint8)) - profile)[:, 0]
+    peaks = _line_peaks(contrast, 3)
+    paired = []
+    for tab in groups:
+        tab_spacing = float(np.median(np.diff(tab)))
+        candidates = []
+        for index in range(len(peaks) - 4):
+            five = peaks[index:index + 5]
+            gaps = np.diff(five)
+            spacing = float(np.median(gaps))
+            if (.45 * tab_spacing <= spacing <= tab_spacing
+                    and max(abs(gaps - spacing)) <= max(1, spacing * .2)
+                    and 1.5 * spacing < tab[0] - five[-1] < 8 * spacing
+                    and not any(five[0] <= group[-1] and group[0] <= five[-1]
+                                and not (len(group) == 5 and abs(group[0] - five[0]) <= 3
+                                         and abs(group[-1] - five[-1]) <= 3
+                                         and (spacing < tab_spacing * .85 or allow_equal_five))
+                                for group in groups)):
+                candidates.append(five)
+        paired.append(max(candidates, key=lambda lines: lines[-1]) if candidates else [])
+    return paired
+
+
+def prepare_images(inputs: list[Path], output: Path, layout: str = 'auto', expected_strings: int | None = None) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     rows = []
     rejected = []
@@ -72,14 +121,28 @@ def prepare_images(inputs: list[Path], output: Path) -> dict:
         if not groups:
             rejected.append(dict(source=source, reason="未检测到四至六根等距弦线，可能是黑屏、片尾或模糊帧，请复查"))
             return
+        notation = notation_staves(image, groups, allow_equal_five=expected_strings == 5) if layout != 'tab' else [[] for _ in groups]
+        # Strong standard staves may also pass the original line detector.
+        # Pair them with the lower TAB instead of exposing a false five-string row.
+        keep = [i for i, group in enumerate(groups) if not any(
+            upper and abs(group[0] - upper[0]) <= 3 and abs(group[-1] - upper[-1]) <= 3
+            and len(group) == 5 for upper in notation)]
+        groups, notation = [groups[i] for i in keep], [notation[i] for i in keep]
         for index, group in enumerate(groups):
             spacing = int(np.median(np.diff(group)))
             y0 = max(0, group[0] - spacing * 4)
+            upper = notation[index]
+            if layout == 'standard-tab' and not upper:
+                rejected.append(dict(source=source, reason=f'第 {index + 1} 组弦线上方未找到完整五线谱，请复查谱面类型'))
+                continue
+            if upper:
+                y0 = max(0, upper[0] - round(float(np.median(np.diff(upper))) * 6))
             y1 = min(image.shape[0], group[-1] + spacing * 5)
             if index:
-                y0 = max(y0, (groups[index - 1][-1] + group[0]) // 2)
+                y0 = max(y0, (groups[index - 1][-1] + (upper[0] if upper else group[0])) // 2)
             if index + 1 < len(groups):
-                y1 = min(y1, (group[-1] + groups[index + 1][0]) // 2)
+                next_top = notation[index + 1][0] if notation[index + 1] else groups[index + 1][0]
+                y1 = min(y1, (group[-1] + next_top) // 2)
             crop = image[y0:y1].copy()
             # Only byte-identical adjacent rows are skipped. Musical similarity is
             # not enough evidence: repeated phrases may be distinct measures.
@@ -88,10 +151,15 @@ def prepare_images(inputs: list[Path], output: Path) -> dict:
             previous = crop
             name = f"row_{len(rows) + 1:04d}.png"
             imwrite(str(output / name), crop)
-            rows.append(dict(id=name, source=source, strings=len(group),
+            metadata = dict(id=name, source=source, source_row=index + 1, strings=len(group), layout='tab',
+                             source_bounds=[0,y0,image.shape[1],y1-y0],
+                             source_size=[image.shape[1],image.shape[0]],
                              lines=[y - y0 for y in group],
                              bars=bar_positions(crop, [y - y0 for y in group]),
-                             width=crop.shape[1], height=crop.shape[0]))
+                             width=crop.shape[1], height=crop.shape[0])
+            if upper:
+                metadata.update(layout='standard-tab', notation_lines=[y - y0 for y in upper])
+            rows.append(metadata)
 
     for path in inputs:
         if path.suffix.lower() == ".pdf":

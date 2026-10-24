@@ -3,6 +3,7 @@
 This is deliberately a draft reader. Unknown glyphs/continuations are retained
 as unresolved beats, not silently changed to rests or repaired to fit a meter.
 """
+import os
 import re
 import threading
 from pathlib import Path
@@ -15,6 +16,7 @@ from app.services.image_io import imread
 
 _ocr = None
 _ocr_lock = threading.Lock()
+OCR_THREADS = min(4, os.cpu_count() or 1)
 
 
 class UnsupportedTabImage(ValueError):
@@ -105,7 +107,7 @@ def read_text(images):
     with _ocr_lock:
         if _ocr is None:
             from rapidocr_onnxruntime import RapidOCR
-            _ocr = RapidOCR(intra_op_num_threads=2, inter_op_num_threads=2)
+            _ocr = RapidOCR(intra_op_num_threads=OCR_THREADS, inter_op_num_threads=2)
         return _ocr.text_rec(images)[0]
 
 
@@ -382,7 +384,7 @@ def slide_has_curve(gray, line, x_left, x_right, spacing):
         return False
     k=max(2,len(profile)//4)
     middle=np.mean(profile[len(profile)//3:len(profile)*2//3])
-    return middle-max(np.mean(profile[:k]),np.mean(profile[-k:])) > spacing*.1
+    return bool(middle-max(np.mean(profile[:k]),np.mean(profile[-k:])) > spacing*.1)
 
 
 def read_local_tab(path: Path, row: dict, tuning: list[int]) -> RecognitionResult:

@@ -1,13 +1,19 @@
 import json
+import hashlib
 import re
+import shutil
+import tempfile
 import threading
+import time
+import uuid
+from typing import Literal
 from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from app.models.score import RecognitionConfig, RecognitionResult, RowExclusion, Score
+from app.models.score import ImagePreparationConfig, RecognitionConfig, RecognitionResult, RowExclusion, Score
 from app.services.score_exporter import export_gp5, validate_score
 from app.services.score_images import prepare_images
 from app.services.tab_recognizer import ollama_models, recognize_row
@@ -15,6 +21,7 @@ from app.storage import manager as storage
 
 router = APIRouter()
 _guard = threading.Lock()
+_json_lock = threading.RLock()
 _busy = set()
 
 
@@ -28,24 +35,46 @@ def root(project_id: str) -> Path:
 
 def write_json(path: Path, data):
     temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    encoded = json.dumps(data, ensure_ascii=False, indent=2)
+    # Windows readers can briefly deny replacement of an open file. Keep our
+    # readers and writers synchronized, with bounded retries for other readers.
+    with _json_lock:
+        try:
+            temporary.write_text(encoded, encoding="utf-8")
+            for attempt in range(6):
+                try:
+                    temporary.replace(path)
+                    break
+                except PermissionError:
+                    if attempt == 5:
+                        raise
+                    time.sleep(.01 * 2 ** attempt)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def read_json(path: Path, default=None):
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
+    with _json_lock:
+        encoded = path.read_text(encoding="utf-8") if path.exists() else None
+    return json.loads(encoded) if encoded is not None else default
 
 
 def acquire(project_id):
+    from app.services import project_guard
     with _guard:
-        if project_id in _busy:
+        if project_id in _busy or not project_guard.acquire(project_id):
             raise HTTPException(409, "识谱任务进行中，请等待完成")
         _busy.add(project_id)
 
 
 def release(project_id):
+    from app.services import project_guard
     with _guard:
         _busy.discard(project_id)
+        project_guard.release(project_id)
 
 
 @router.get("/score/models")
@@ -56,12 +85,12 @@ def models():
         return {"models": [], "error": "无法读取 Ollama 模型，请打开 Ollama 并确认本机 11434 端口可用"}
 
 
-def prepare(project_id, directory, inputs):
+def prepare(project_id, directory, inputs, layout='auto'):
     # A new source invalidates the old transcription immediately.
     write_json(directory / "score.json", Score().model_dump())
     write_json(directory / "task.json", {"status": "preparing", "log": []})
     try:
-        manifest = prepare_images(inputs, directory / "rows")
+        manifest = prepare_images(inputs, directory / "rows", layout=layout)
         write_json(directory / "manifest.json", manifest)
         write_json(directory / "task.json", {"status": "idle", "log": []})
         return manifest
@@ -72,7 +101,7 @@ def prepare(project_id, directory, inputs):
 
 
 @router.post("/projects/{project_id}/score/pdf")
-def upload_pdf(project_id: str, file: UploadFile = File(...)):
+def upload_pdf(project_id: str, file: UploadFile = File(...), layout: Literal['auto', 'tab', 'standard-tab'] = 'auto'):
     directory = root(project_id)
     acquire(project_id)
     try:
@@ -81,7 +110,7 @@ def upload_pdf(project_id: str, file: UploadFile = File(...)):
             raise HTTPException(400, "请上传不超过 50MB 的有效 PDF")
         path = directory / "input.pdf"
         path.write_bytes(content)
-        return prepare(project_id, directory, [path])
+        return prepare(project_id, directory, [path], layout)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     finally:
@@ -89,7 +118,7 @@ def upload_pdf(project_id: str, file: UploadFile = File(...)):
 
 
 @router.post("/projects/{project_id}/score/prepare")
-def prepare_crops(project_id: str):
+def prepare_crops(project_id: str, layout: Literal['auto', 'tab', 'standard-tab'] = 'auto'):
     directory = root(project_id)
     acquire(project_id)
     try:
@@ -97,7 +126,71 @@ def prepare_crops(project_id: str):
                         if path.suffix.lower() in (".png", ".jpg", ".jpeg"))
         if not inputs:
             raise HTTPException(400, "没有视频截图，请先处理视频或导入 PDF")
-        return prepare(project_id, directory, inputs)
+        return prepare(project_id, directory, inputs, layout)
+    finally:
+        release(project_id)
+
+
+@router.post('/projects/{project_id}/score/refresh-images')
+def refresh_images(project_id: str, config: ImagePreparationConfig):
+    """Re-crop the same input while preserving transcription and review state."""
+    directory = root(project_id)
+    acquire(project_id)
+    try:
+        old = read_json(directory / 'manifest.json', {'rows': [], 'rejected': []})
+        score = Score.model_validate(read_json(directory / 'score.json', Score().model_dump()))
+        if any('source_row' not in row for row in old['rows']) and score.measures:
+            raise HTTPException(409, '旧谱行缺少原始位置，无法安全对应已校对内容；请备份后在另一项目重新导入。')
+        is_pdf = old['rows'] and all(row['source'].startswith('PDF 第 ') for row in old['rows'])
+        inputs = [directory / 'input.pdf'] if is_pdf else sorted(
+            path for path in storage.crops_dir(project_id).iterdir() if path.suffix.lower() in ('.png', '.jpg', '.jpeg'))
+        if not inputs or any(not path.is_file() for path in inputs):
+            raise HTTPException(400, '原始输入不存在，请重新导入 PDF 或读取视频截图。')
+        old_keys = {(row['source'], row.get('source_row')): row for row in old['rows']}
+        with tempfile.TemporaryDirectory(prefix='.refresh-', dir=directory) as temporary:
+            staged = Path(temporary)
+            manifest = prepare_images(inputs, staged, layout=config.layout)
+            if config.stitch:
+                from app.services.score_continuity import stitch_rows
+                for candidate in manifest['rows']:
+                    original = old_keys.get((candidate['source'],candidate['source_row']))
+                    if original:
+                        for field in ('excluded','exclude_reason'):
+                            if field in original:
+                                candidate[field] = original[field]
+                manifest['continuity_log'] = stitch_rows(staged,manifest['rows'])
+            mapping = {}
+            pending = []
+            for row in manifest['rows']:
+                original = old_keys.get((row['source'], row['source_row']))
+                image = staged / row['id']
+                suffix = hashlib.sha256(image.read_bytes()).hexdigest()[:12]
+                row['id'] = f"{image.stem}_{suffix}.png"
+                pending.append((image, directory / 'rows' / row['id']))
+                if original:
+                    mapping[original['id']] = row['id']
+                    for field in ('excluded', 'exclude_reason'):
+                        if field in original:
+                            row[field] = original[field]
+            if any(measure.source not in mapping for measure in score.measures):
+                raise HTTPException(409, '新裁图无法对应部分已有小节，原数据保持不变；请检查谱面类型或在另一项目导入。')
+            snapshot = directory / 'backups' / ('images-' + uuid.uuid4().hex)
+            snapshot.mkdir(parents=True)
+            write_json(snapshot / 'manifest.json', old)
+            write_json(snapshot / 'score.json', score.model_dump())
+            # Keep old images in place so each snapshot remains recoverable.
+            for image, target in pending:
+                if not target.exists():
+                    shutil.copy2(image, target)
+            for measure in score.measures:
+                measure.source = mapping[measure.source]
+            task = read_json(directory / 'task.json', {'status': 'idle', 'log': []})
+            task['log'].append(f'已更新完整谱行图片；保留 {len(score.measures)} 个已有小节及其核对标记。错误的已核对内容需先取消核对再重新识别。')
+            with _json_lock:
+                write_json(directory / 'score.json', score.model_dump())
+                write_json(directory / 'manifest.json', manifest)
+                write_json(directory / 'task.json', task)
+            return manifest
     finally:
         release(project_id)
 
@@ -106,13 +199,16 @@ def prepare_crops(project_id: str):
 def get_score(project_id: str):
     directory = root(project_id)
     score = Score.model_validate(read_json(directory / "score.json", Score().model_dump()))
-    task = read_json(directory / "task.json", {"status": "idle", "log": []})
     with _guard:
+        task = read_json(directory / "task.json", {"status": "idle", "log": []})
         if project_id not in _busy and task["status"] in ("recognizing", "preparing"):
             task["status"] = "failed"
             task["log"].append("服务曾重启，任务已中断。已完成的数据保留，请重试。")
             write_json(directory / "task.json", task)
+    from app.services.reading_checks import reading_summary
     return {"score": score, "validation": validate_score(score),
+            "reading_checks": [reading_summary(m) for m in score.measures],
+            "video_recovery": read_json(directory/'video-recovery.json',None),
             "draft_validation": validate_score(score,require_review=False),
             "manifest": read_json(directory / "manifest.json", {"rows": [], "rejected": []}),
             "task": task}
@@ -130,7 +226,9 @@ def save_score(project_id: str, score: Score):
 
 
 def run_recognition(project_id, directory, config, manifest, score):
-    task = {"status": "recognizing", "current": 0, "total": min(config.max_rows, len(manifest["rows"])), "log": []}
+    started = time.perf_counter()
+    task = {"status": "recognizing", "current": 0, "total": min(config.max_rows, len(manifest["rows"])),
+            "cache_hits": 0, "elapsed_seconds": 0, "log": []}
     recognized_count = 0
     next_number = 1
     previous_notes = []
@@ -139,6 +237,8 @@ def run_recognition(project_id, directory, config, manifest, score):
         rows = manifest["rows"][:config.max_rows]
         # Checkpoints are row-scoped. A retry replaces only that row's measures.
         for index, row in enumerate(rows):
+            row_started = time.perf_counter()
+            cache_hit = False
             task["current"] = index + 1
             write_json(directory / "task.json", task)
             if row.get('excluded'):
@@ -155,13 +255,28 @@ def run_recognition(project_id, directory, config, manifest, score):
             task["generated_chars"] = 0
             context_row = {**row, 'start_number': next_number, 'previous_notes': previous_notes}
             existing = sorted([m for m in score.measures if m.source == row['id']], key=lambda m:m.number)
-            if any(m.reviewed for m in existing):
+            if config.strategy == 'repair':
+                from app.services.model_repair import repair_combined
+                if row.get('layout') != 'standard-tab' or not existing:
+                    result = RecognitionResult(measures=existing, warnings=['模型修复仅处理已有五线谱＋TAB 小节，此行已保留。'])
+                else:
+                    result = repair_combined(directory / 'rows' / row['id'], context_row, config, score.tuning,
+                                             existing, recognize_row, on_progress=progress,
+                                             cache_directory=directory / 'cache/model-repair')
+            elif any(m.reviewed for m in existing) and not (config.rebuild and row.get('layout') == 'standard-tab'):
                 # Preserve human corrections, including a partly reviewed row.
                 # Unchecking that row's reviews explicitly allows a fresh read.
                 result = RecognitionResult(measures=[m.model_copy(deep=True) for m in existing],
                                            warnings=['此行已有人工核对内容，整行已保留；如需重识别，请先取消该行的核对标记。'])
             else:
-                result = recognize_row(directory / "rows" / row["id"], context_row, config, score.tuning, on_progress=progress)
+                def mark_cache_hit():
+                    nonlocal cache_hit
+                    cache_hit = True
+                result = recognize_row(directory / "rows" / row["id"], context_row, config, score.tuning,
+                                       on_progress=progress, cache_directory=directory / 'cache/local-tab',
+                                       on_cache_hit=mark_cache_hit)
+                if cache_hit:
+                    task['cache_hits'] += 1
             if result.measures:
                 next_number = result.measures[-1].number + 1
                 previous_notes = [note.model_dump() for note in result.measures[-1].beats[-1].notes] if result.measures[-1].beats else []
@@ -181,8 +296,11 @@ def run_recognition(project_id, directory, config, manifest, score):
             processed_sources.add(row['id'])
             score.measures.sort(key=lambda m: m.number)
             write_json(directory / "score.json", score.model_dump())
-            task["log"].append(f"{row['id']}：识别 {len(result.measures)} 小节")
+            reused = '（复用缓存）' if cache_hit else ''
+            task["log"].append(f"{row['id']}：识别 {len(result.measures)} 小节{reused}，耗时 {time.perf_counter()-row_started:.2f} 秒")
             task["log"].extend(result.warnings)
+            if row.get('continuity_issue'):
+                task['log'].append(row['continuity_issue'])
             write_json(directory / "task.json", task)
         if recognized_count:
             task["status"] = "review"
@@ -200,14 +318,95 @@ def run_recognition(project_id, directory, config, manifest, score):
         else:
             task["log"].append(str(exc)[:700])
     finally:
-        write_json(directory / "task.json", task)
-        release(project_id)
+        task['elapsed_seconds'] = round(time.perf_counter() - started, 3)
+        task['log'].append(f"本次用时 {task['elapsed_seconds']:.2f} 秒，复用缓存 {task['cache_hits']} 行。")
+        try:
+            write_json(directory / "task.json", task)
+        finally:
+            release(project_id)
+
+
+def start_recognition_worker(project_id,directory,config,manifest,score):
+    threading.Thread(target=run_recognition,args=(project_id,directory,config,manifest,score),daemon=True).start()
+
+
+def run_video_recovery(project_id,directory,score,frames,roi,run_id):
+    from app.services.video_score_recovery import index_frame_views,stitch_frame_views,recover_measures
+    from app.services.diagnostic_export import export_diagnostic
+    output=directory/'video-recovery'/run_id
+    task=dict(status='recognizing',current=0,total=1,log=['正在从本项目原视频复读，结果另存为草稿。'])
+    def progress(message):
+        task['log'].append(message);write_json(directory/'task.json',task)
+    try:
+        output.mkdir(parents=True)
+        write_json(output/'source-score.json',score.model_dump())
+        before=export_diagnostic(score,output/'before.gp5')
+        targets=[v['number'] for v in before['placeholders']]
+        views=index_frame_views(frames,roi,output/'views',progress)
+        views=stitch_frame_views(views,output/'views/joined')
+        result,evidence=recover_measures(score,targets,views,output/'evidence',progress)
+        write_json(output/'recognized-score.json',result.model_dump())
+        report=export_diagnostic(result,output/'recovered.gp5')
+        write_json(directory/'video-recovery.json',dict(run_id=run_id,recovered=len(evidence),
+            placeholders=len(report['placeholders']),url=f'/api/projects/{project_id}/score/video-recovery/{run_id}/download',
+            evidence=[dict(number=e['number'],url=f'/api/projects/{project_id}/score/video-recovery/{run_id}/images/{e["image"]}') for e in evidence]))
+        task['status']='review';progress(f'原视频补读完成：恢复 {len(evidence)} 小节，草稿剩余 {len(report["placeholders"])} 个占位小节；原乐谱未覆盖。')
+    except Exception as exc:
+        task['status']='failed';progress('原视频补读未完成：'+str(exc)[:500]+'；原乐谱保留。')
+    finally:
+        try:write_json(directory/'task.json',task)
+        finally:release(project_id)
+
+
+def start_video_recovery_worker(*args):
+    threading.Thread(target=run_video_recovery,args=args,daemon=True).start()
+
+
+@router.post('/projects/{project_id}/score/recover-video')
+def recover_video(project_id: str):
+    directory=root(project_id);acquire(project_id)
+    try:
+        config=storage.read_config(project_id)
+        frames=sorted(storage.frames_dir(project_id).glob('*.jpg'))
+        manifest=read_json(directory/'manifest.json',{'rows':[]})
+        if not frames or config.roi is None:
+            raise HTTPException(400,'本项目没有保留视频帧或谱面选区，请先处理对应的原视频。')
+        if not manifest['rows'] or any(r.get('layout')!='standard-tab' for r in manifest['rows'] if not r.get('excluded')):
+            raise HTTPException(400,'原视频补读仅用于五线谱＋TAB 项目；纯 TAB 继续使用原识别流程。')
+        score=Score.model_validate(read_json(directory/'score.json',Score().model_dump()))
+        if not score.measures:raise HTTPException(400,'请先生成本地识谱草稿。')
+        run_id=uuid.uuid4().hex
+        write_json(directory/'task.json',dict(status='recognizing',current=0,total=1,log=['开始原视频补读，另存草稿。']))
+        start_video_recovery_worker(project_id,directory,score,frames,config.roi.model_dump(),run_id)
+        return dict(status='recognizing',run_id=run_id)
+    except Exception:
+        release(project_id);raise
+
+
+def recovery_directory(project_id,run_id):
+    if not re.fullmatch('[a-f0-9]{32}',run_id):raise HTTPException(404,'补读版本不存在')
+    return root(project_id)/'video-recovery'/run_id
+
+
+@router.get('/projects/{project_id}/score/video-recovery/{run_id}/download')
+def download_video_recovery(project_id: str,run_id: str):
+    path=recovery_directory(project_id,run_id)/'recovered.gp5'
+    if not path.is_file():raise HTTPException(404,'补读草稿尚未生成')
+    return FileResponse(path,filename='score-video-recovered-draft.gp5',media_type='application/octet-stream')
+
+
+@router.get('/projects/{project_id}/score/video-recovery/{run_id}/images/{filename}')
+def video_recovery_image(project_id: str,run_id: str,filename: str):
+    directory=recovery_directory(project_id,run_id)/'evidence'
+    evidence=read_json(directory/'evidence.json',[])
+    if filename not in {e['image'] for e in evidence}:raise HTTPException(404,'补读原图不存在')
+    return FileResponse(directory/filename)
 
 
 @router.post("/projects/{project_id}/score/recognize")
 def recognize(project_id: str, config: RecognitionConfig):
     directory = root(project_id)
-    if config.strategy == 'vision' and not config.model.strip():
+    if config.strategy in ('vision', 'repair') and not config.model.strip():
         raise HTTPException(400, "请选择模型")
     acquire(project_id)
     try:
@@ -215,8 +414,13 @@ def recognize(project_id: str, config: RecognitionConfig):
         if not manifest["rows"]:
             raise HTTPException(400, "请先整理截图或导入 PDF")
         score = Score.model_validate(read_json(directory / "score.json", Score().model_dump()))
+        if config.strategy == 'repair' or config.rebuild:
+            snapshot = directory / 'backups' / (('structure-' if config.rebuild else 'model-repair-') + uuid.uuid4().hex)
+            snapshot.mkdir(parents=True)
+            write_json(snapshot / 'score.json', score.model_dump())
+            write_json(snapshot / 'manifest.json', manifest)
         write_json(directory / "task.json", {"status": "recognizing", "current": 0, "total": min(config.max_rows, len(manifest["rows"])), "log": []})
-        threading.Thread(target=run_recognition, args=(project_id, directory, config, manifest, score), daemon=True).start()
+        start_recognition_worker(project_id,directory,config,manifest,score)
         return {"status": "recognizing"}
     except Exception:
         release(project_id)
@@ -296,3 +500,51 @@ def export_draft(project_id: str):
 def download_draft(project_id: str):
     export_draft(project_id)
     return FileResponse(root(project_id)/'score-draft.gp5',filename='score-draft.gp5',media_type='application/octet-stream')
+
+
+@router.get('/projects/{project_id}/score/download-diagnostic')
+def download_diagnostic(project_id: str):
+    from app.services.diagnostic_export import export_diagnostic
+    directory = root(project_id)
+    acquire(project_id)
+    try:
+        score=Score.model_validate(read_json(directory/'score.json',Score().model_dump()))
+        export_diagnostic(score,directory/'score-diagnostic.gp5')
+        return FileResponse(directory/'score-diagnostic.gp5',filename='score-diagnostic-INCOMPLETE.gp5',
+                            media_type='application/octet-stream')
+    except ValueError as exc:
+        raise HTTPException(422,str(exc)) from exc
+    finally:
+        release(project_id)
+
+
+@router.get('/projects/{project_id}/score/rows/{filename}/analysis')
+def row_analysis(project_id: str,filename: str):
+    from app.services.score_analysis import analyze_row
+    directory=root(project_id)
+    manifest=read_json(directory/'manifest.json',{'rows':[]})
+    row=next((r for r in manifest['rows'] if r['id']==filename),None)
+    if row is None:raise HTTPException(404,'谱行不存在')
+    if row.get('layout')!='standard-tab':raise HTTPException(400,'叠加分析目前用于五线谱＋TAB，纯TAB识别保持原方式')
+    acquire(project_id)
+    try:
+        score=Score.model_validate(read_json(directory/'score.json',Score().model_dump()))
+        current=[m for m in score.measures if m.source==filename]
+        start=min((m.number for m in current),default=row.get('number_floor',1))
+        previous=next((m for m in reversed(score.measures) if m.number<start),None)
+        context=dict(row,start_number=start,previous_notes=[n.model_dump() for n in previous.beats[-1].notes] if previous and previous.beats else [])
+        output=directory/'analysis';output.mkdir(exist_ok=True)
+        result=analyze_row(directory/'rows'/filename,context,score.tuning,output/(filename+'.png'))
+        write_json(output/(filename+'.json'),result)
+        return result
+    finally:release(project_id)
+
+
+@router.get('/projects/{project_id}/score/rows/{filename}/analysis-image')
+def row_analysis_image(project_id: str,filename: str):
+    directory=root(project_id)
+    manifest=read_json(directory/'manifest.json',{'rows':[]})
+    if filename not in {r['id'] for r in manifest['rows']}:raise HTTPException(404,'谱行不存在')
+    path=directory/'analysis'/(filename+'.png')
+    if not path.exists():raise HTTPException(404,'请先生成识别位置叠加图')
+    return FileResponse(path,media_type='image/png')

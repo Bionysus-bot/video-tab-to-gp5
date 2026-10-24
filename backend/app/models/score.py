@@ -26,6 +26,9 @@ class TabNote(StrictModel):
 
 
 class TabBeat(StrictModel):
+    ocr_confidence: float | None = Field(default=None,ge=0,le=1)
+    pitch_evidence: Literal['ocr','staff'] | None = None
+    rhythm_evidence: Literal['notation','fallback'] | None = None
     duration: Literal[1, 2, 4, 8, 16, 32, 64]
     dotted: bool = False
     triplet: bool = False
@@ -54,16 +57,33 @@ class Score(StrictModel):
 
 
 class RecognitionConfig(StrictModel):
-    strategy: Literal['hybrid', 'vision'] = 'hybrid'
+    layout: Literal['auto', 'tab', 'standard-tab'] = 'auto'
+    strategy: Literal['hybrid', 'vision', 'repair'] = 'hybrid'
     provider: Literal["ollama", "compatible"] = "ollama"
     base_url: str = "http://127.0.0.1:11434"
     model: str = ""
     max_rows: int = Field(default=3, ge=1, le=200)
+    force: bool = False
+    rebuild: bool = False
+    local_review: bool = False
+
+
+class ImagePreparationConfig(StrictModel):
+    layout: Literal['auto', 'tab', 'standard-tab'] = 'auto'
+    stitch: bool = False
+
+
+class TabFragment(StrictModel):
+    side: Literal['left','right']
+    bounds: list[int]
+    measure: TabMeasure
+    complete: bool = False
 
 
 class RecognitionResult(StrictModel):
     measures: list[TabMeasure]
     warnings: list[str] = Field(default_factory=list)
+    fragments: list[TabFragment] = Field(default_factory=list)
 
 
 class RowExclusion(StrictModel):
