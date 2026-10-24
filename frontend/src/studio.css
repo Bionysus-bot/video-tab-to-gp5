@@ -1,3 +1,12 @@
+@font-face {
+  font-family: "Fusion Pixel Chinese";
+  src: url("./assets/fonts/fusion-pixel-12px-proportional-zh_hans.otf.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+2E80-9FFF, U+F900-FAFF, U+FF00-FFEF, U+20000-323AF;
+}
+
 .studio {
   --bg: #fafaf8;
   --surface: #ffffff;
@@ -14,7 +23,8 @@
   color: var(--text);
   background-color: var(--bg);
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='paper'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Cpath fill='%23d4d4cf' opacity='.035' filter='url(%23paper)' d='M0 0h160v160H0z'/%3E%3C/svg%3E");
-  font-family: "Segoe UI", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  font-family: "Fusion Pixel Chinese", "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
   font-size: 15px;
   font-weight: 400;
   line-height: 1.9;
@@ -50,15 +60,15 @@
 .studio input::placeholder, .studio textarea::placeholder { color: #7a8a9e; }
 .studio h1, .studio h2, .studio h3 { color: var(--heading); font-weight: 600; }
 .studio strong, .studio th { font-weight: 500; }
-.studio h1 { font-size: clamp(30px, 3.1vw, 44px); line-height: 1.4; letter-spacing: .5px; font-weight: 600; }
+.studio h1 { font-size: 36px; line-height: 1.4; letter-spacing: .5px; font-weight: 600; }
 .studio h1 em { color: #559ddd; font-style: normal; }
-.studio h2 { font-size: 21px; line-height: 1.7; letter-spacing: 1px; }
+.studio h2 { font-size: 24px; line-height: 1.7; letter-spacing: 1px; }
 .studio h3 { font-size: 17px; letter-spacing: .5px; }
 .studio-header, .view-tabs, .studio-main, .studio-footer { max-width: 1560px; margin: auto; }
 .studio-header { height: 76px; display: flex; align-items: center; gap: 56px; border-bottom: .5px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 16px; min-width: 210px; }
 .brand svg { width: 38px; height: 38px; color: #86b7ce; }
-.brand > span { font-size: 25px; font-weight: 500; letter-spacing: 5px; }
+.brand > span { font-size: 24px; font-weight: 500; letter-spacing: 5px; }
 .brand small { display: block; font-size: 11px; letter-spacing: .5px; color: var(--text-muted); }
 .project-switch { display: flex; align-items: center; gap: 24px; flex: 1; min-width: 0; }
 .project-switch select { max-width: 260px; font-size: 12px; border-bottom-color: transparent; }
@@ -94,7 +104,7 @@
 .surface-heading h2 { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .surface-heading span { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 .setup-panel { padding: 20px 0 0; }
-.setup-panel > h2 { font-size: 23px; margin-bottom: 24px; }
+.setup-panel > h2 { font-size: 24px; margin-bottom: 24px; }
 .setup-panel fieldset { border: 0; padding: 0; margin-bottom: 36px; }
 .setup-panel legend { font-size: 14px; font-weight: 500; color: var(--heading); margin-bottom: 16px; }
 .type-option { display: flex; align-items: center; gap: 12px; padding: 20px 0; border-bottom: .5px solid var(--border); cursor: pointer; }
@@ -240,7 +250,7 @@
   .studio { padding: 0 32px; }
   .studio-header { height: 72px; gap: 24px; }
   .brand { min-width: 140px; }
-  .brand > span { font-size: 22px; }
+  .brand > span { font-size: 24px; }
   .brand small { font-size: 10px; }
   .project-switch select { max-width: 180px; }
   .view-tabs { height: 56px; gap: 32px; }
@@ -275,7 +285,7 @@
   .header-tools { margin-left: 0; }
   .view-tabs { gap: 24px; height: 56px; }
   .view-tabs > button > span { display: none; }
-  .studio h1 { font-size: 29px; letter-spacing: 1px; }
+  .studio h1 { font-size: 36px; letter-spacing: 1px; }
   .page-heading { padding-top: 4px; gap: 16px; }
   .page-heading > .button { width: 100%; }
   .setup-panel { padding-left: 16px; }
