@@ -2,9 +2,9 @@
 
 将视频中的动态 TAB 或已有 PDF 转成可编辑的 Guitar Pro 5（`.gp5`）草稿。本机运行，当前重点支持 **四弦 / 五弦贝斯、纯 TAB / 五线谱＋TAB**，不做音频听写。
 
-**当前试用版：`v0.3.0-preview.1`。** [下载发布包](https://github.com/Bionysus-bot/video-tab-to-gp5/releases/tag/v0.3.0-preview.1) · [版本记录](CHANGELOG.md) · [五弦说明](docs/FIVE_STRING_BASS.md)
+**当前发布版本：`v0.3.0`。** [下载发布包](https://github.com/Bionysus-bot/video-tab-to-gp5/releases/tag/v0.3.0) · [版本记录](CHANGELOG.md) · [五弦说明](docs/FIVE_STRING_BASS.md)
 
-本版位于 `codex/five-string-bass`，主分支暂保留原版本。识谱结果需对照原图核对；可先下载带疑点标注的草稿，再逐步修正。通过程序检查不等于所有音符准确。
+本版已合并至 `main`，并作为 GitHub Latest 发布。此前预发布版和旧版本保留，可按标签回退。识谱结果需对照原图核对；可先下载带疑点标注的草稿，再逐步修正。通过程序检查不等于所有音符准确。
 
 ## 本版更新
 
@@ -22,9 +22,13 @@
 
 六弦吉他、多声部指弹不属于本版已完成支持范围。原项目的视频抽帧、PDF 导出等工具保留在旧界面 `/?legacy=1`，新旧版本编辑数据独立，不是同步编辑器。
 
+## 请确认下载的是新版
+
+从 **[Latest 发布页](https://github.com/Bionysus-bot/video-tab-to-gp5/releases/latest)** 下载 `video-tab-to-gp5-web.zip`，不要使用旧版 v0.1.1 的包。新版打开后应是暖白浅蓝的三步工作区，页脚显示 **v0.3.0**；若仍是深色单列页面，请确认启动的是新解压目录、地址没有 `?legacy=1`，并用 Ctrl+F5 刷新。先停止旧服务，再启动新目录的服务，避免访问旧端口。
+
 ## 下载哪个包
 
-在 [Releases](https://github.com/Bionysus-bot/video-tab-to-gp5/releases/tag/v0.3.0-preview.1) 下载：
+在 [Releases](https://github.com/Bionysus-bot/video-tab-to-gp5/releases/tag/v0.3.0) 下载：
 
 | 文件 | 适用场景 |
 | --- | --- |
@@ -72,7 +76,7 @@ powershell -ExecutionPolicy Bypass -File ./stop.ps1
 安装 Node.js 22 / 24 和 Git，然后执行：
 
 ```powershell
-git clone --branch v0.3.0-preview.1 --single-branch https://github.com/Bionysus-bot/video-tab-to-gp5.git
+git clone --branch v0.3.0 --single-branch https://github.com/Bionysus-bot/video-tab-to-gp5.git
 cd video-tab-to-gp5
 py -3.12 -m venv backend/.venv
 ./backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt

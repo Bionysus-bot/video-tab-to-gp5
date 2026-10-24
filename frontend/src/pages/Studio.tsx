@@ -391,7 +391,7 @@ export default function Studio() {
    </section></div></> : <div className="empty-result"><Mark /><h2>乐谱尚未生成</h2><button className="button secondary" onClick={() => setView(running ? 'convert' : 'prepare')}>{running ? '查看识谱进度' : '导入并准备素材'}</button></div>}
    </>}
  </main>
- <footer className="studio-footer"><span>本地保存 · 版本保留</span><span>基于 guitar-score-extractor · 非商业使用 <button className="text-button" onClick={() => { setDrawerTab('about'); settings.current?.showModal(); }}>来源与说明</button></span></footer>
+ <footer className="studio-footer"><span>本地保存 · 版本保留 · v0.3.0</span><span>基于 guitar-score-extractor · 非商业使用 <button className="text-button" onClick={() => { setDrawerTab('about'); settings.current?.showModal(); }}>来源与说明</button></span></footer>
  <dialog className="settings-dialog" ref={settings} onClick={e => {
             if (e.target === settings.current)
                 settings.current.close();

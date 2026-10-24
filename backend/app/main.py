@@ -36,7 +36,7 @@ def _check_dependencies():
 _check_dependencies()
 
 
-app = FastAPI(title="Guitar Score Extraction API", version="0.3.0-preview.1")
+app = FastAPI(title="Guitar Score Extraction API", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
