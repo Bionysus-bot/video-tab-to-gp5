@@ -13,3 +13,5 @@ Related provider discussion (8.1.2, NOT an exact manifest for our 8.1.1): https:
 Next action: obtain the exact 8.1.1 dependency revisions and build scripts from the provider, or replace these tools with a build for which the complete source and recipes can be archived and verified. No messages have been sent to the provider.
 
 Project noncommercial restrictions do not apply to third-party components; their own licenses remain in force.
+
+The repository owner authorized a public request; it has been submitted at https://github.com/GyanD/codexffmpeg/issues/253. The complete dependency manifest and recipes have not yet been received.

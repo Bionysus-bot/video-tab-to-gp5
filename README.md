@@ -28,7 +28,7 @@
 
 ## 下载哪个包
 
-Windows 桌面版已完成本机安装、窗口启动、PDF → GP5 和退出验证，150 项后端测试通过。桌面安装包暂存于 **Release 草稿**，尚未公开下载：FFmpeg 主源码已归档，完整依赖源码与原构建材料仍需补齐，详见 [源码材料状态](docs/FFMPEG_SOURCE_STATUS.md)。下表仍为已公开的网页版包。
+Windows 桌面版已完成本机安装、窗口启动、PDF → GP5 和退出验证，150 项后端测试通过。桌面安装包暂存于 **Release 草稿**，尚未公开下载：FFmpeg 主源码已归档，完整依赖源码与原构建材料仍需补齐，已向构建方[提交材料请求](https://github.com/GyanD/codexffmpeg/issues/253)，详见 [源码材料状态](docs/FFMPEG_SOURCE_STATUS.md)。下表仍为已公开的网页版包。
 
 桌面包准备好后，Windows 10/11 x64 用户可选择安装包（双击安装，默认创建桌面快捷方式）或便携包（完整解压，运行 `PuJian.exe`，保留 `_internal`）。不需要另装 Python、Node.js、OCR 或 FFmpeg；WebView2 为必要组件，Ollama 仅用于可选复核。安装与数据目录、升级及排错见 [桌面版说明](docs/DESKTOP.md)。
 
