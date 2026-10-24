@@ -223,8 +223,11 @@
 .drawer-body > p { margin: 28px 0; color: var(--text-muted); font-size: 14px; line-height: 2; max-width: 65ch; }
 .drawer-body > label:not(.check-label) { display: flex; flex-direction: column; gap: 12px; margin: 32px 0; font-size: 13px; }
 .drawer-body .check-label { display: flex; align-items: center; gap: 12px; font-size: 13px; margin: 32px 0; }
-.tuning-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 28px; margin: 32px 0; }
-.tuning-fields label { display: grid; gap: 12px; font-size: 13px; }
+.studio .tuning-choice { margin: 24px 0; }
+.studio .tuning-choice .floating-field { display: flex; width: 100%; }
+.studio .tuning-notes { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-top: 12px; }
+.studio .tuning-notes span { color: var(--text-muted); font-size: 12px; }
+.studio .tuning-notes strong { color: var(--heading); font-size: 14px; letter-spacing: .5px; }
 .unsaved-dialog { margin: auto !important; padding: 48px !important; border-radius: 20px; max-width: calc(100vw - 32px); }
 .unsaved-dialog p { margin: 24px 0 40px; color: var(--text-muted); font-size: 14px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }

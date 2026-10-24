@@ -7,6 +7,7 @@ import type { Artifact } from '../services/workspace';
 import ROISelector from '../components/ROISelector';
 import MeasureEditor from '../components/MeasureEditor';
 import Botanical from '../components/Botanical';
+import TuningSelect, { STANDARD_TUNING } from '../components/TuningSelect';
 import '../studio.css';
 type View = 'prepare' | 'convert' | 'results';
 type BatchConfirmation = { revision: Revision; confirmed: { number: number }[]; skipped: { measure_id: string; number: number; reasons: string[] }[] };
@@ -49,6 +50,7 @@ export default function Studio() {
     } | null>(null);
     const [job, setJob] = useState<Job | null>(null);
     const [tempo, setTempo] = useState(120);
+    const [tuning, setTuning] = useState<number[]>([...STANDARD_TUNING]);
     const [model, setModel] = useState<string>(() => preferences().model || '');
     const [review, setReview] = useState<boolean>(() => !!preferences().review);
     const [provider, setProvider] = useState<string>(() => preferences().provider || 'ollama');
@@ -67,7 +69,7 @@ export default function Studio() {
     const running = activeJob(job);
     const root = project ? `/projects/${project}` : '';
     useEffect(() => { localStorage.setItem('score-studio-preferences', JSON.stringify({ model, review, provider, baseUrl })); }, [model, review, provider, baseUrl]);
-    const applyRevision = (value: Revision | null) => { setRevision(value); setDraft(value ? structuredClone(value.score) : null); setSelected(0); setDirty(false); setBatchResult(null); };
+    const applyRevision = (value: Revision | null) => { setRevision(value); setDraft(value ? structuredClone(value.score) : null); setSelected(0); setDirty(false); setBatchResult(null); setTuning(value ? [...value.score.tuning] : [...STANDARD_TUNING]); };
     const refresh = useCallback(async (pid: string, reset = true) => {
         const next = await call<WorkspaceData>(`/projects/${pid}/workspace`);
         if (current.current !== pid)
@@ -232,7 +234,7 @@ export default function Studio() {
             if (source === 'video' && config) await legacy.setProcessingConfig(project, config.processing);
             const latest = await call<WorkspaceData>(root + '/workspace');
             const next = await call<Job>(root + '/conversion-jobs', {
-                source, input_id: pdf?.id, layout, roi, base_revision: latest.state.active_revision, tempo, tuning: draft?.tuning || [43, 38, 33, 28],
+                source, input_id: pdf?.id, layout, roi, base_revision: latest.state.active_revision, tempo, tuning: draft?.tuning || tuning,
                 review, model, provider, base_url: baseUrl, recover: true
             });
             setJob(next);
@@ -303,6 +305,10 @@ export default function Studio() {
             if (download) window.location.assign(`/api${root}/artifacts/${output.id}/download`);
         });
     }
+    function changeTuning(value: number[]) {
+        setTuning(value);
+        if (draft) { setDraft({ ...draft, tuning: value, settings_confirmed: false }); setDirty(true); }
+    }
     const art = data?.artifacts.find(a => a.revision === revision?.id) || (job?.artifact && job.artifact.revision === revision?.id ? job.artifact : null);
     const issues = revision?.issues.filter(i => filter === 'all' || (filter === 'important' ? !['ocr_notice', 'settings_unconfirmed'].includes(i.kind) : i.kind === filter)) || [];
     const measure = draft?.measures[selected];
@@ -334,7 +340,7 @@ export default function Studio() {
        {source === 'video' && config?.video && <div className="timeline"><span>画面时间</span><input aria-label="选择视频画面时间" type="range" min={0} max={config.video.duration} step={.5} value={time} onChange={e => setTime(Number(e.target.value))}/><output>{Math.floor(time / 60)}:{String(Math.floor(time % 60)).padStart(2, '0')}</output></div>}
        {pdf && <p className="canvas-caption">{pdf.pages} 页 · 选区应用于所有页，版式不同请分开导入。</p>}</> : <div className="empty-canvas"><Mark /><h2>导入你的乐谱</h2><p>支持视频与 pdf</p><button className="button secondary" disabled={busy} onClick={() => fileInput.current?.click()}>选择文件</button>{data?.revision && <button className="text-button" onClick={() => setSource('existing')}>使用旧项目已有谱行</button>}</div>}
    </section><aside className="setup-panel"><h2>转谱设置</h2><fieldset><legend>谱面类型</legend>{[['tab', '纯 tab'], ['standard-tab', '五线谱 ＋ tab']].map(([value, title]) => <label className={'type-option ' + (layout === value ? 'chosen' : '')} key={value}><input type="radio" name="layout" value={value} checked={layout === value} onChange={() => setLayout(value)}/><span><strong>{title}</strong></span></label>)}</fieldset>
-   <div className="setup-row"><span>乐器</span><strong>四弦贝斯</strong></div><div className="setup-row"><span>速度</span><label className="floating-field"><input aria-label="速度 bpm" type="number" min={20} max={300} value={tempo} onChange={e => setTempo(Number(e.target.value))}/><span className="field-label"> bpm</span></label></div><p className="muted">速度、调弦请按原谱设置。</p>
+   <div className="setup-row"><span>乐器</span><strong>四弦贝斯</strong></div><div className="setup-row"><span>速度</span><label className="floating-field"><input aria-label="速度 bpm" type="number" min={20} max={300} value={tempo} onChange={e => setTempo(Number(e.target.value))}/><span className="field-label"> bpm</span></label></div><TuningSelect value={draft?.tuning || tuning} onChange={changeTuning} disabled={busy || running}/><p className="muted">速度、调弦请按原谱设置。</p>
    <button className="text-button settings-link" onClick={() => { setDrawerTab('score'); settings.current?.showModal(); }}>更多设置 →</button>
    <div className="setup-note">{layout === 'standard-tab' ? '选区包含五线谱、tab 与小节编号。' : '选区包含完整弦线、品位与节奏。'}</div>
    <button className="button primary start-button" disabled={busy || running || (!roi && source !== 'existing') || (source === 'existing' && !revision) || !project} onClick={() => guarded(() => { void start(); })}>{busy ? '正在准备…' : '开始自动识谱 →'}</button>
@@ -380,7 +386,7 @@ export default function Studio() {
             if (e.target === settings.current)
                 settings.current.close();
         }}><div className="drawer"><header><h2>工作区设置</h2><button className="icon-button" aria-label="关闭设置" onClick={() => settings.current?.close()}>×</button></header><nav>{[['score', '乐谱'], ['model', '模型'], ['video', '视频'], ['about', '说明']].map(([key, title]) => <button key={key} className={drawerTab === key ? 'selected' : ''} onClick={() => setDrawerTab(key)}>{title}</button>)}</nav>
- {drawerTab === 'score' && <div className="drawer-body"><h3>四弦贝斯</h3><p>默认调弦 G、D、A、E。新任务使用当前设置。</p><label className="floating-field"><span className="field-label">速度 bpm</span><input type="number" min={20} max={300} value={tempo} onChange={e => setTempo(Number(e.target.value))}/></label><p className="muted">调弦（midi 音高，高弦 → 低弦）</p>{draft && <><div className="tuning-fields">{draft.tuning.map((value, index) => <label key={index} className="floating-field">{index + 1}<span className="field-label"> 弦</span><input type="number" min={0} max={127} value={value} onChange={e => { const next = structuredClone(draft); next.tuning[index] = Number(e.target.value); setDraft(next); setDirty(true); }}/></label>)}</div><label className="check-label"><input type="checkbox" checked={draft.settings_confirmed} onChange={e => { setDraft({ ...draft, settings_confirmed: e.target.checked, tempo }); setDirty(true); }}/>我已确认速度、调弦与拍号设置</label><button className="button secondary" disabled={!dirty} onClick={() => perform(async () => { await save(); })}>保存乐谱设置</button></>}</div>}
+ {drawerTab === 'score' && <div className="drawer-body"><h3>四弦贝斯</h3><label className="floating-field"><span className="field-label">速度 bpm</span><input type="number" min={20} max={300} value={tempo} onChange={e => setTempo(Number(e.target.value))}/></label><TuningSelect value={draft?.tuning || tuning} onChange={changeTuning} disabled={busy || running}/>{draft && <><label className="check-label"><input type="checkbox" checked={draft.settings_confirmed} onChange={e => { setDraft({ ...draft, settings_confirmed: e.target.checked, tempo }); setDirty(true); }}/>我已确认速度、调弦与拍号设置</label><button className="button secondary" disabled={!dirty} onClick={() => perform(async () => { await save(); })}>保存乐谱设置</button></>}</div>}
  {drawerTab === 'model' && <div className="drawer-body"><h3>局部视觉复核</h3><label className="check-label"><input type="checkbox" checked={review} onChange={e => setReview(e.target.checked)}/>自动复核具体疑点</label><p>可选，未启用时使用本地识谱。</p><label className="floating-field"><span className="field-label">服务</span><select value={provider} onChange={e => { setProvider(e.target.value); setBaseUrl(e.target.value === 'ollama' ? 'http://127.0.0.1:11434' : ''); }}><option value="ollama">本机 Ollama</option><option value="compatible">兼容图片接口</option></select></label><label className="floating-field"><span className="field-label">地址</span><input value={baseUrl} onChange={e => setBaseUrl(e.target.value)}/></label><label className="floating-field"><span className="field-label">视觉模型</span><input value={model} list="studio-models" placeholder="qwen3-vl:8b-instruct" onChange={e => setModel(e.target.value)}/><datalist id="studio-models">{models.map(m => <option key={m} value={m}/>)}</datalist></label><button className="button secondary" onClick={() => perform(async () => {
                 const next = await call<{
                     models: {
